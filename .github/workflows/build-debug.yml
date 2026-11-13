@@ -208,9 +208,21 @@ jobs:
           cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release --verbose 2>&1 | tee -a /tmp/aether_arm64.log; RC=${PIPESTATUS[0]}
           echo "arm64 build rc=$RC" | tee -a /tmp/aether_arm64.log
           ls -lh ../app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | tee -a /tmp/aether_arm64.log
-          # Build x86_64 (emulator) - best effort, don't fail primary if missing
+          # Build x86_64 (emulator). The APK/emulator gates require this ABI, so
+          # surface the actual compiler/linker failure instead of hiding it
+          # behind a warning that only becomes a missing-file error later.
           echo "=== cargo ndk x86_64 ===" | tee /tmp/aether_x64.log
-          cargo ndk -t x86_64 -o ../app/src/main/jniLibs build --release 2>&1 | tee -a /tmp/aether_x64.log || echo "::warning::x86_64 libaether build failed, continuing with arm64 only" | tee -a /tmp/aether_x64.log
+          free -h | tee -a /tmp/aether_x64.log
+          df -h . | tee -a /tmp/aether_x64.log
+          cargo ndk -t x86_64 -o ../app/src/main/jniLibs build --release 2>&1 | tee -a /tmp/aether_x64.log; X64_RC=${PIPESTATUS[0]}
+          echo "x86_64 build rc=$X64_RC" | tee -a /tmp/aether_x64.log
+          if [ "$X64_RC" -ne 0 ] || [ ! -f ../app/src/main/jniLibs/x86_64/libaether.so ]; then
+            X64_ERR=$(grep -m1 -E 'error\[|error: |FAILED|fatal|Killed|No space|memory' /tmp/aether_x64.log | head -n1 | sed 's/%/%25/g; s/\r/%0D/g' | cut -c1-1200)
+            X64_TAIL=$(tail -n 60 /tmp/aether_x64.log | sed 's/%/%25/g; s/\r/%0D/g' | paste -sd '\n' - | sed ':a;N;$!ba;s/\n/%0A/g' | cut -c1-6000)
+            echo "::error title=Aether cargo x86_64::${X64_ERR:-x86_64 libaether.so was not produced}"
+            echo "::error title=Aether x86_64 log tail::$X64_TAIL"
+            exit 1
+          fi
           ls -lh ../app/src/main/jniLibs/x86_64/ 2>&1 | tee -a /tmp/aether_x64.log || true
           cd ..
           echo "--- tail arm64 log ---"
