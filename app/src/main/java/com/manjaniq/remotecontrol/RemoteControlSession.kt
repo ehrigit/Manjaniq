@@ -96,7 +96,18 @@ class RemoteControlSession internal constructor(
                     // This Deferred belongs to the application scope, not the
                     // timeout's child scope. A blocked DNS/socket call therefore
                     // cannot keep the UI waiting past the startup deadline.
-                    val request = async(ioDispatcher) { source.fetch(identity) }
+                    val request = async(ioDispatcher) {
+                        // Contain transport failures inside the Deferred. An
+                        // escaping async child exception would cancel this
+                        // launch before await() can translate it to fail-open.
+                        try {
+                            source.fetch(identity)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
                     try {
                         withTimeoutOrNull(checkTimeoutMs) { request.await() }
                     } finally {

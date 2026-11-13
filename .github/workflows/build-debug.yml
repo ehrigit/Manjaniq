@@ -139,12 +139,16 @@ jobs:
       - name: Install Rust toolchain (Aether)
         run: |
           set -euo pipefail
-          rustup update stable --no-self-update || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          # Pin the known-good native toolchain instead of tracking rolling
+          # stable. The verified baseline used 1.99.1; a new stable release must
+          # not silently change JNI export/strip behavior between CI runs.
+          rustup toolchain install 1.99.1 --profile minimal --no-self-update || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1
+          rustup default 1.99.1
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
           rustc --version
           cargo --version
-          rustup target add aarch64-linux-android x86_64-linux-android --toolchain stable || rustup target add aarch64-linux-android x86_64-linux-android
+          rustup target add aarch64-linux-android x86_64-linux-android --toolchain 1.99.1
           cargo install cargo-ndk --locked || cargo install cargo-ndk
           cargo-ndk --version || cargo ndk --version
 
@@ -595,10 +599,12 @@ jobs:
       - name: Install Rust toolchain (Aether - emulator-smoke)
         run: |
           set -euo pipefail
-          rustup update stable --no-self-update || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          # Match the build job's pinned native toolchain exactly.
+          rustup toolchain install 1.99.1 --profile minimal --no-self-update || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1
+          rustup default 1.99.1
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
-          rustup target add aarch64-linux-android x86_64-linux-android --toolchain stable || rustup target add aarch64-linux-android x86_64-linux-android
+          rustup target add aarch64-linux-android x86_64-linux-android --toolchain 1.99.1
           cargo install cargo-ndk --locked || cargo install cargo-ndk
           sudo apt-get update && sudo apt-get install -y cmake perl || true
 
