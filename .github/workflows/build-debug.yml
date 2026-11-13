@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -220,8 +220,8 @@ jobs:
           cargo ndk -t x86_64 -o ../app/src/main/jniLibs build --release 2>&1 | tee -a /tmp/aether_x64.log; X64_RC=${PIPESTATUS[0]}
           echo "x86_64 build rc=$X64_RC" | tee -a /tmp/aether_x64.log
           if [ "$X64_RC" -ne 0 ] || [ ! -f ../app/src/main/jniLibs/x86_64/libaether.so ]; then
-            X64_ERR=$(grep -m1 -E 'error\[|error: |FAILED|fatal|Killed|No space|memory' /tmp/aether_x64.log | head -n1 | sed 's/%/%25/g; s/\r/%0D/g' | cut -c1-1200)
-            X64_TAIL=$(tail -n 60 /tmp/aether_x64.log | sed 's/%/%25/g; s/\r/%0D/g' | paste -sd '\n' - | sed ':a;N;$!ba;s/\n/%0A/g' | cut -c1-6000)
+            X64_ERR=$(grep -E 'error\[|error: |FAILED|fatal|Killed|No space|memory|panicked|CMake Error' /tmp/aether_x64.log | grep -v 'failed to run custom build command' | tail -n 5 | sed 's/%/%25/g; s/\r/%0D/g' | paste -sd '\n' - | sed ':a;N;$!ba;s/\n/%0A/g' | cut -c1-2000)
+            X64_TAIL=$(tail -c 6000 /tmp/aether_x64.log | sed 's/%/%25/g; s/\r/%0D/g' | paste -sd '\n' - | sed ':a;N;$!ba;s/\n/%0A/g')
             echo "::error title=Aether cargo x86_64::${X64_ERR:-x86_64 libaether.so was not produced}"
             echo "::error title=Aether x86_64 log tail::$X64_TAIL"
             exit 1
@@ -558,7 +558,7 @@ jobs:
           if-no-files-found: error
 
   emulator-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
     timeout-minutes: 90
     steps:
