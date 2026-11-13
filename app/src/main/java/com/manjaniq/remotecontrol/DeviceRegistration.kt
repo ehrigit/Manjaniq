@@ -126,7 +126,7 @@ internal class DeviceRegistration(
         if (payload.size > MAX_PAYLOAD_BYTES) return false
 
         var connection: HttpURLConnection? = null
-        try {
+        return try {
             val url = URL(REGISTER_ENDPOINT)
             connection = openConnection(url)
             if (connection !is HttpsURLConnection || url.protocol != "https") return false
@@ -179,22 +179,24 @@ internal class DeviceRegistration(
         private const val UNKNOWN = "unknown"
 
         /** Zero runtime permissions: Build fields, ANDROID_ID, and PackageManager only. */
-        internal fun collectDeviceInfo(context: Context): DeviceRegistrationInfo? = try {
-            val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-                ?.takeIf { it.isNotBlank() } ?: return null
-            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            val versionCode = PackageInfoCompat.getLongVersionCode(packageInfo)
-            if (versionCode < 0) return null
-            DeviceRegistrationInfo(
-                deviceId = bounded(deviceId),
-                manufacturer = bounded(Build.MANUFACTURER),
-                model = bounded(Build.MODEL),
-                androidVersion = bounded(Build.VERSION.RELEASE),
-                appVersionName = bounded(packageInfo.versionName),
-                appVersionCode = versionCode,
-            )
-        } catch (_: Exception) {
-            null
+        internal fun collectDeviceInfo(context: Context): DeviceRegistrationInfo? {
+            try {
+                val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+                    ?.takeIf { it.isNotBlank() } ?: return null
+                val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                val versionCode = PackageInfoCompat.getLongVersionCode(packageInfo)
+                if (versionCode < 0) return null
+                return DeviceRegistrationInfo(
+                    deviceId = bounded(deviceId),
+                    manufacturer = bounded(Build.MANUFACTURER),
+                    model = bounded(Build.MODEL),
+                    androidVersion = bounded(Build.VERSION.RELEASE),
+                    appVersionName = bounded(packageInfo.versionName),
+                    appVersionCode = versionCode,
+                )
+            } catch (_: Exception) {
+                return null
+            }
         }
 
         private fun bounded(value: String?): String {
