@@ -152,6 +152,9 @@ jobs:
           rustc --version
           cargo --version
           rustup target add aarch64-linux-android x86_64-linux-android --toolchain 1.99.1
+          # bindgen uses rustfmt when present; the minimal profile omits it and
+          # the fallback formatter breaks boring-sys' ErrLib type-name search.
+          rustup component add rustfmt --toolchain 1.99.1
           # The released cargo-ndk 4.1.2 omits the versioned --target from
           # BINDGEN_EXTRA_CLANG_ARGS, which breaks boring-sys x86_64 bindgen.
           # Pin the upstream fix (main@8cffdef) instead of tracking crates.io.
@@ -633,6 +636,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup target add aarch64-linux-android x86_64-linux-android --toolchain 1.99.1
+          rustup component add rustfmt --toolchain 1.99.1
           cargo install cargo-ndk --git https://github.com/bbqsrc/cargo-ndk --rev 8cffdefbc9fc29b15ef50390b73258032b26734b --locked
           sudo apt-get update && sudo apt-get install -y cmake perl || true
 
