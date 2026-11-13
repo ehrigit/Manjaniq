@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_control_checking">Checking app access…</string>
+    <string name="remote_control_restricted_title">Device restricted</string>
+    <string name="remote_control_restricted_message">This device has been restricted by the app administrator. App and proxy access are unavailable. Contact the administrator if you believe this is a mistake.</string>
+    <string name="remote_control_update_title">Update required</string>
+    <string name="remote_control_update_message">Install Manjaniq version code %1$s or newer to continue. This version can no longer access the app or its proxy engines.</string>
+    <string name="remote_control_open_update">Open latest release</string>
+    <string name="remote_control_update_unavailable">No browser is available. Open github.com/ehsanbagherigit/Manjaniq/releases on another device and install the latest APK.</string>
+    <string name="remote_control_retry">Check again</string>
+    <string name="remote_control_password_title">App password</string>
+    <string name="remote_control_password_message">Enter the app password provided by your administrator to continue.</string>
+    <string name="remote_control_password_label">Password</string>
+    <string name="remote_control_password_incorrect">Incorrect password. Try again.</string>
+    <string name="remote_control_unlock">Unlock app</string>
+    <string name="remote_control_announcement_title">Notice</string>
+    <string name="remote_control_continue">Continue</string>
+    <string name="remote_control_service_blocked">App access is not available yet. Open Manjaniq and complete the startup check.</string>
+</resources>

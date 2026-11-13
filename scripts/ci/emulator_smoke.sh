@@ -117,6 +117,14 @@ LAUNCHER="${RESOLVE_OUT##*$'\n'}"   # last line of the output
 echo "launcher resolves to: $LAUNCHER"
 [ "$LAUNCHER" = "$ACTIVITY" ] || fail "launcher intent resolves to '$LAUNCHER', expected $ACTIVITY"
 
+# Phase 1 also proves the production composition root fails open during a
+# control-plane outage. Disable the emulator radios so this launch cannot be
+# influenced by a live operator's ban/password/update policy. Restore them
+# before phase 2 (whose test runner supplies an offline policy at the host seam).
+log "Phase 1 outage fallback: disable emulator network radios"
+diag "disable Wi-Fi" adb shell svc wifi disable
+diag "disable mobile data" adb shell svc data disable
+
 adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$ACTIVITY" | tr -d '\r' | tee "$OUT/am-start.txt"
 grep -q 'Status: ok' "$OUT/am-start.txt" || fail "am start did not report Status: ok"
 
@@ -166,6 +174,8 @@ fi
 echo "Phase 1 PASSED: artifact $ARTIFACT_SHA launched, RESUMED, pid $PID stable for ${STABILITY_WINDOW_S}s"
 echo "phase1=PASS" >> "$OUT/summary.txt"
 
+diag "restore Wi-Fi" adb shell svc wifi enable
+diag "restore mobile data" adb shell svc data enable
 adb shell am force-stop "$PKG"
 adb uninstall "$PKG"   # the test build is signed by this runner's debug key
 

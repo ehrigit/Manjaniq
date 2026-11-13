@@ -34,7 +34,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.manjaniq.ManjaniqTestRunner"
 
         // Only the architectures this build actually ships (see [manjaniqAbis]).
         ndk {
@@ -139,6 +139,7 @@ dependencies {
     // no @Preview composables, and it only ever shipped into the debug APK.
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("androidx.test.ext:junit:1.2.1")

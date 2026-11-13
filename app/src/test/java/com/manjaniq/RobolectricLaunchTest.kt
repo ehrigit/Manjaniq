@@ -28,7 +28,7 @@ import java.util.Locale
  * gate remains the on-device LaunchSmokeTest.
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [34])
+@Config(sdk = [34], application = com.manjaniq.remotecontrol.RemoteControlTestApplication::class)
 class RobolectricLaunchTest {
 
     @get:Rule
