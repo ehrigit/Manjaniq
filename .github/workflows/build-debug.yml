@@ -152,7 +152,10 @@ jobs:
           rustc --version
           cargo --version
           rustup target add aarch64-linux-android x86_64-linux-android --toolchain 1.99.1
-          cargo install cargo-ndk --locked || cargo install cargo-ndk
+          # The released cargo-ndk 4.1.2 omits the versioned --target from
+          # BINDGEN_EXTRA_CLANG_ARGS, which breaks boring-sys x86_64 bindgen.
+          # Pin the upstream fix (main@8cffdef) instead of tracking crates.io.
+          cargo install cargo-ndk --git https://github.com/bbqsrc/cargo-ndk --rev 8cffdefbc9fc29b15ef50390b73258032b26734b --locked
           cargo-ndk --version || cargo ndk --version
 
       - name: Build Native Libraries (arm64-v8a + x86_64) - RSTA (Go)
@@ -200,9 +203,6 @@ jobs:
           cmake --version 2>&1 | head -n1 || echo "cmake missing"; perl --version 2>&1 | head -n1 || echo "perl missing"
           # Build arm64-v8a (primary) - vendored path avoids git fetch + rust-version gate
           set +e; set +u
-          # Use the runner's LLVM 18 libclang consistently for bindgen instead
-          # of whichever default libclang a future image happens to select.
-          export LIBCLANG_PATH="${LIBCLANG_PATH:-/usr/lib/llvm-18/lib}"
           cd aether-wrapper
           echo "cargo clean to pick up jni 0.20 change"
           cargo clean 2>&1 | tee /tmp/aether_arm64.log || true
@@ -623,7 +623,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup target add aarch64-linux-android x86_64-linux-android --toolchain 1.99.1
-          cargo install cargo-ndk --locked || cargo install cargo-ndk
+          cargo install cargo-ndk --git https://github.com/bbqsrc/cargo-ndk --rev 8cffdefbc9fc29b15ef50390b73258032b26734b --locked
           sudo apt-get update && sudo apt-get install -y cmake perl || true
 
       - name: Build native libs for the instrumentation build (arm64 + x86_64) - RSTA + Aether
