@@ -96,7 +96,10 @@ class ManjaniqRemoteControlTest {
         var disconnected = false
         var inputOpened = false
         var inputClosed = false
+        private val properties = mutableMapOf<String, String>()
 
+        override fun setRequestProperty(key: String, value: String) { properties[key] = value }
+        override fun getRequestProperty(key: String): String? = properties[key]
         override fun getResponseCode() = status
         override fun getContentLengthLong() = contentLength
         override fun getInputStream(): InputStream {

@@ -132,12 +132,15 @@ class RemoteControlSession internal constructor(
         }
         val alreadyVerified = expectedPasswordDigest != null && verifiedPasswordDigest != null &&
             MessageDigest.isEqual(expectedPasswordDigest, verifiedPasswordDigest)
+        // Keep the notice even when the password branch is taken first; it is
+        // shown immediately after a successful verification.
+        announcement = policy.announcement.takeIf { it.isNotBlank() }.orEmpty()
 
         _state.value = when {
             policy.isBanned -> RemoteControlState.Restricted
             updateRequired -> RemoteControlState.UpdateRequired(policy.latestVersionCode!!)
             expectedPasswordDigest != null && !alreadyVerified -> RemoteControlState.PasswordRequired()
-            else -> announcementState(policy)
+            else -> announcementState()
         }
         if (_state.value !is RemoteControlState.Allowed) {
             // Use existing public Stop requests only. Native lifecycle, transport
@@ -153,11 +156,9 @@ class RemoteControlSession internal constructor(
 
     private var announcement: String = ""
 
-    private fun announcementState(policy: RemotePolicy): RemoteControlState {
-        announcement = policy.announcement.takeIf { it.isNotBlank() }.orEmpty()
-        return if (announcement.isEmpty()) RemoteControlState.Allowed
+    private fun announcementState(): RemoteControlState =
+        if (announcement.isEmpty()) RemoteControlState.Allowed
         else RemoteControlState.Announcement(announcement)
-    }
 
     private fun showAnnouncementOrAllow() {
         _state.value = if (announcement.isEmpty()) RemoteControlState.Allowed
