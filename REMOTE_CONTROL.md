@@ -1,8 +1,9 @@
 # Manjaniq remote control
 
-This is an isolated startup-policy component for the Android client. It does not
-modify RSTA/Aether protocols, native libraries, proxy/tunnel arguments, profiles,
-engine configuration storage, or the existing navigation/screens.
+This is an isolated startup-policy and one-time device-registration component
+for the Android client. It does not modify RSTA/Aether protocols, native
+libraries, proxy/tunnel arguments, profiles, engine configuration storage, or
+the existing navigation/screens.
 
 ## Integration boundary
 
@@ -25,6 +26,7 @@ New implementation lives in `com.manjaniq.remotecontrol`:
 | File | Responsibility |
 | --- | --- |
 | `ManjaniqRemoteControl.kt` | Bounded HTTPS GET, response limits, cleanup, fail-open transport result |
+| `DeviceRegistration.kt` | One-time HTTPS POST, dedicated preferences guard, silent retry-on-failure |
 | `RemotePolicy.kt` | Strict JSON contract parsing, separate from engine config |
 | `RemoteControlSession.kt` | Startup deadline, gate precedence, password verification, process-local state |
 | `RemoteControlGate.kt` | Compose blocking/notice screens; no changes to existing screens |
@@ -82,6 +84,56 @@ Gate precedence:
    continue. It is not repeated on ordinary activity recreation.
 5. **Allowed:** compose the unchanged app and permit normal engine starts.
 
+## First-time device registration
+
+Registration is a fire-and-forget side task launched beside the policy check.
+It never delays the gate, changes gate precedence, grants access, or stops an
+engine. The composition root supplies `DeviceRegistration`; host and
+instrumentation test roots supply offline seams instead.
+
+```http
+POST https://manjaniq-hub.manjaniqhub.workers.dev/api/register
+Accept: application/json
+Content-Type: application/json; charset=utf-8
+Cache-Control: no-cache
+```
+
+```json
+{
+  "device_id": "{ANDROID_ID}",
+  "manufacturer": "{Build.MANUFACTURER}",
+  "model": "{Build.MODEL}",
+  "android_version": "{Build.VERSION.RELEASE}",
+  "app_version": {
+    "version_name": "{installed versionName}",
+    "version_code": 1
+  }
+}
+```
+
+- The specs need **no runtime permission** and no new manifest permission:
+  `Build` fields, the existing `ANDROID_ID`, `PackageManager`, and the existing
+  `INTERNET` permission. No IMEI, serial, advertising ID, account, or location
+  is collected. Text fields are bounded and JSON-encoded.
+- The guard is boolean `is_device_registered`, default `false`, in the dedicated
+  preferences file `com.manjaniq.remotecontrol.device_registration`. It is not
+  mixed into engine/profile configuration storage.
+- On launcher startup, a false flag schedules one attempt on `Dispatchers.IO`.
+  The flag is committed **only after HTTP 200**. A later launch in the same or
+  a new OS process then skips the request. Clearing app data or reinstalling
+  starts a new installation; an app update alone does not resend the payload.
+- Connect/read timeouts are 3 seconds and the whole registration wait is
+  7 seconds; the deadline watcher disconnects the socket. Non-200 responses
+  (including an unimplemented endpoint), DNS/socket/TLS errors, timeouts,
+  missing local identity/version, and oversized payloads fail **silently** and
+  leave the flag false. The next OS process retries once. Failed attempts may
+  therefore be sent more than once; successful registration is persisted once
+  per installation.
+- The client does not assume `/api/register` is already deployed. Until the
+  Worker implements it and returns HTTP 200, registration simply remains
+  unregistered and local VPN use is unaffected. No URL, payload, identifier, or
+  response body is logged.
+
 ## Resilience and security properties
 
 - HTTPS only, with Android's default certificate and hostname verification.
@@ -93,8 +145,10 @@ Gate precedence:
 - Only HTTP 200 is parsed. Other statuses, timeouts, DNS/socket/TLS errors,
   invalid JSON/field types, missing local identity/version, and oversized bodies
   (more than 64 KiB) **fail open**.
-- No restriction or password is persisted. A fresh OS process starts with a new
-  check; an unavailable backend cannot resurrect an old cached ban.
+- No restriction or password is persisted. The only persisted remote-control
+  state is the one-time registration success flag. A fresh OS process starts
+  with a new policy check; an unavailable backend cannot resurrect an old
+  cached ban.
 - No device ID, password, response body, or query URL is logged. The password is
   not placed in Compose saved state, Intents, preferences, or engine logs.
 - A backend outage does not stop an already running local engine. Confirmed
@@ -120,6 +174,11 @@ containing the query-string device identifier.
 Host tests cover the JSON contract, HTTPS request settings/encoding, non-200 and
 exception fallback, body limits, startup timeout, gate precedence, password
 rotation, announcement acknowledgement, and real Compose gate rendering.
+`DeviceRegistrationTest` additionally covers the first-launch payload, the
+HTTP-200-only preferences flip, skip on later launches, retry after non-200 and
+transport failures, missing identity, HTTPS enforcement, blocked-socket timeout,
+and zero-permission spec collection. Session tests prove registration cannot
+delay or override the policy gate.
 
 Instrumentation uses `ManjaniqTestRunner` to supply a test-only application through
 the same `RemoteControlHost` composition interface. There is no production

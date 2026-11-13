@@ -6,6 +6,7 @@ import android.provider.Settings
 import androidx.core.content.pm.PackageInfoCompat
 import com.manjaniq.core.EngineRepository
 import com.manjaniq.core.models.EngineState
+import com.manjaniq.remotecontrol.DeviceRegistration
 import com.manjaniq.remotecontrol.ManjaniqRemoteControl
 import com.manjaniq.remotecontrol.RemoteControlSession
 import com.manjaniq.service.AetherService
@@ -51,6 +52,7 @@ class ManjaniqApplication : Application(), RemoteControlHost {
                 }
             },
             onAccessBlocked = { stopActiveEngines(app) },
+            registration = DeviceRegistration(app),
         )
     }
 

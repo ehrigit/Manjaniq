@@ -38,11 +38,13 @@ class RemoteControlSession internal constructor(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val checkTimeoutMs: Long = ManjaniqRemoteControl.CHECK_TIMEOUT_MS,
     private val onAccessBlocked: () -> Unit = {},
+    private val registration: DeviceRegistrationSource? = null,
 ) {
     private val _state = MutableStateFlow<RemoteControlState>(RemoteControlState.Checking)
     val state: StateFlow<RemoteControlState> = _state.asStateFlow()
 
     private var started = false
+    private var registrationStarted = false
     private var expectedPasswordDigest: ByteArray? = null
     private var verifiedPasswordDigest: ByteArray? = null
 
@@ -50,6 +52,7 @@ class RemoteControlSession internal constructor(
     fun start() {
         if (started) return
         started = true
+        launchRegistration()
         check()
     }
 
@@ -60,6 +63,27 @@ class RemoteControlSession internal constructor(
     }
 
     fun canStartEngine(): Boolean = _state.value is RemoteControlState.Allowed
+
+    /**
+     * Best-effort first-launch telemetry. It runs beside the policy check, is
+     * never awaited by the gate, and cannot change access state. The one-time
+     * persistence/retry guard lives in DeviceRegistration, not in the UI.
+     */
+    private fun launchRegistration() {
+        val source = registration ?: return
+        if (registrationStarted) return
+        registrationStarted = true
+        scope.launch {
+            try {
+                source.registerIfNeeded()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Registration is silent by contract; a failure must not cancel
+                // the policy check or block local VPN access.
+            }
+        }
+    }
 
     fun verifyPassword(candidate: String): Boolean {
         if (_state.value !is RemoteControlState.PasswordRequired) return false

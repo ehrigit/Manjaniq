@@ -1,6 +1,7 @@
 package com.manjaniq
 
 import android.app.Application
+import com.manjaniq.remotecontrol.DeviceRegistrationSource
 import com.manjaniq.remotecontrol.RemoteControlSession
 import com.manjaniq.remotecontrol.RemotePolicy
 import com.manjaniq.remotecontrol.RemotePolicySource
@@ -21,6 +22,7 @@ internal class TestManjaniqApplication : Application(), RemoteControlHost {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             deviceId = { "instrumentation-device" },
             versionCode = { 1L },
+            registration = OfflineDeviceRegistrationSource(),
         )
     }
 }
@@ -28,4 +30,9 @@ internal class TestManjaniqApplication : Application(), RemoteControlHost {
 internal class DevicePolicySource : RemotePolicySource {
     @Volatile var policy: RemotePolicy? = RemotePolicy()
     override suspend fun fetch(deviceId: String): RemotePolicy? = policy
+}
+
+/** Instrumentation must not send telemetry to the live Worker. */
+internal class OfflineDeviceRegistrationSource : DeviceRegistrationSource {
+    override suspend fun registerIfNeeded(): Boolean = false
 }

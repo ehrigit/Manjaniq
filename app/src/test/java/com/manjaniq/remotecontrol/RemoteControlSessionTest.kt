@@ -159,12 +159,44 @@ class RemoteControlSessionTest {
         assertFalse(restricted.canStartEngine())
     }
 
+    @Test
+    fun registrationRunsBesideTheGateWithoutDelayingLocalAccess() = runTest {
+        val registration = FakeRegistrationSource(delayMs = 10_000)
+        val session = session(FakeSource(RemotePolicy()), registration = registration)
+        session.start()
+        runCurrent()
+        assertEquals(RemoteControlState.Allowed, session.state.value)
+        assertTrue(session.canStartEngine())
+        assertEquals(1, registration.calls)
+        advanceUntilIdle()
+        assertTrue(registration.completed)
+    }
+
+    @Test
+    fun registrationFailureCannotOverridePolicyAndIsAttemptedOncePerSession() = runTest {
+        val registration = FakeRegistrationSource(failure = IOException("registration offline"))
+        val source = FakeSource(RemotePolicy(isBanned = true))
+        val session = session(source, registration = registration)
+        session.start()
+        advanceUntilIdle()
+        assertEquals(RemoteControlState.Restricted, session.state.value)
+        assertFalse(session.canStartEngine())
+        session.retry()
+        advanceUntilIdle()
+        session.start()
+        advanceUntilIdle()
+        assertEquals(1, registration.calls)
+        assertEquals(2, source.calls)
+        assertEquals(RemoteControlState.Restricted, session.state.value)
+    }
+
     private fun kotlinx.coroutines.test.TestScope.session(
         source: RemotePolicySource,
         timeoutMs: Long = 7_000,
         identity: String? = "test-device",
         version: Long? = 1L,
         onBlocked: () -> Unit = {},
+        registration: DeviceRegistrationSource? = null,
     ) = RemoteControlSession(
         source = source,
         // TestScope itself is the foreground scope: advanceUntilIdle() drains
@@ -176,7 +208,23 @@ class RemoteControlSessionTest {
         ioDispatcher = StandardTestDispatcher(testScheduler),
         checkTimeoutMs = timeoutMs,
         onAccessBlocked = onBlocked,
+        registration = registration,
     )
+
+    private class FakeRegistrationSource(
+        private val delayMs: Long = 0,
+        private val failure: Exception? = null,
+    ) : DeviceRegistrationSource {
+        var calls = 0
+        var completed = false
+        override suspend fun registerIfNeeded(): Boolean {
+            calls++
+            if (delayMs > 0) delay(delayMs)
+            failure?.let { throw it }
+            completed = true
+            return true
+        }
+    }
 
     private class FakeSource(
         var policy: RemotePolicy?,
