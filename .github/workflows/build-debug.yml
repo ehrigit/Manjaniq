@@ -656,7 +656,13 @@ jobs:
           cd aether-wrapper
           # Vendored path already patched; rebuild for emulator (no --locked, wrapper has no Cargo.lock)
           cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release || cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release --verbose
-          cargo ndk -t x86_64 -o ../app/src/main/jniLibs build --release || cargo ndk -t x86_64 -o ../app/src/main/jniLibs build --release --verbose || echo "::warning::Aether x86_64 build failed"
+          # Match the build job's x86_64 bindgen workaround exactly.
+          cargo ndk-env -t x86_64 --include-internal > /tmp/aether_x64_env.sh
+          source /tmp/aether_x64_env.sh
+          export LIBCLANG_PATH=/usr/lib/llvm-18/lib
+          cargo build --release --target x86_64-linux-android
+          mkdir -p ../app/src/main/jniLibs/x86_64
+          cp target/x86_64-linux-android/release/libaether.so ../app/src/main/jniLibs/x86_64/libaether.so
           cd ..
           # Copy libc++_shared.so for emulator build as well
           for ABI in arm64-v8a x86_64; do
