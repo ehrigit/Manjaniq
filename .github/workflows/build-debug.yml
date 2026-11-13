@@ -109,10 +109,13 @@ jobs:
       # NativeBridge/AetherBridge already degrade gracefully on the host. Catch
       # Kotlin/resource/test-source errors before the long Rust/Go native builds.
       - name: Compile Android client before native builds
-        run: bash scripts/ci/gradle_step.sh /tmp/gradle_compile.log :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin --stacktrace
+        run: bash scripts/ci/gradle_step.sh /tmp/gradle_compile.log :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin --stacktrace --no-daemon
 
       - name: Run isolated remote-control unit tests
-        run: bash scripts/ci/gradle_step.sh /tmp/gradle_remote_test.log :app:testDebugUnitTest --tests 'com.manjaniq.remotecontrol.*' --stacktrace
+        run: bash scripts/ci/gradle_step.sh /tmp/gradle_remote_test.log :app:testDebugUnitTest --tests 'com.manjaniq.remotecontrol.*' --stacktrace --no-daemon
+
+      - name: Release early Gradle memory before native builds
+        run: ./gradlew --stop || true
 
       - name: Test Go engine package
         run: |
