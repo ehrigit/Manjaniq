@@ -105,6 +105,15 @@ jobs:
           test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
           echo "Android NDK and ARM64 compiler are ready."
 
+      # The Android client does not need prebuilt JNI libraries to compile:
+      # NativeBridge/AetherBridge already degrade gracefully on the host. Catch
+      # Kotlin/resource/test-source errors before the long Rust/Go native builds.
+      - name: Compile Android client before native builds
+        run: bash scripts/ci/gradle_step.sh /tmp/gradle_compile.log :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin --stacktrace
+
+      - name: Run isolated remote-control unit tests
+        run: bash scripts/ci/gradle_step.sh /tmp/gradle_remote_test.log :app:testDebugUnitTest --tests 'com.manjaniq.remotecontrol.*' --stacktrace
+
       - name: Test Go engine package
         run: |
           set -euo pipefail
@@ -220,8 +229,10 @@ jobs:
             echo "### Aether arm64 build log (tail)" >> $GITHUB_STEP_SUMMARY 2>&1 || true
             tail -n 120 /tmp/aether_arm64.log >> $GITHUB_STEP_SUMMARY 2>&1 || true
           fi
-          # Fail if primary missing
+          # Fail if primary missing or cargo returned an error. A leftover file
+          # must never turn a failed compiler/linker invocation into a green build.
           test -f app/src/main/jniLibs/arm64-v8a/libaether.so || { echo "::error::libaether.so not produced - see /tmp/aether_arm64.log"; cat /tmp/aether_arm64.log 2>&1 | tail -n 500; exit 1; }
+          test "${RC:-1}" -eq 0 || { echo "::error::cargo ndk arm64 returned ${RC:-1} - see /tmp/aether_arm64.log"; exit 1; }
 
           # ---- Fix libc++_shared.so: required by libaether.so (BoringSSL/C++ via quiche) ----
           # The NDK provides it at sources/cxx-stl/llvm-libc++/libs/<abi>/libc++_shared.so
@@ -294,7 +305,13 @@ jobs:
           # Explicit ELF + symbol gate for libaether (fail if missing when wrapper exists)
           if [ -f app/src/main/jniLibs/arm64-v8a/libaether.so ]; then
             echo "Aether lib present, checking exports..."
-            nm -D app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Java_com_manjaniq_AetherBridge" || llvm-nm app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Java_com_manjaniq_AetherBridge" || { echo "::error::Missing JNI exports in libaether.so"; exit 1; }
+            nm -D app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Java_com_manjaniq_AetherBridge" || llvm-nm -D app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Java_com_manjaniq_AetherBridge" || {
+              echo "::error::Missing JNI exports in libaether.so"
+              { nm -D app/src/main/jniLibs/arm64-v8a/libaether.so; llvm-nm -D app/src/main/jniLibs/arm64-v8a/libaether.so; readelf --dyn-syms app/src/main/jniLibs/arm64-v8a/libaether.so; } > /tmp/aether_symbols.txt 2>&1 || true
+              SYMBOLS=$(head -n 80 /tmp/aether_symbols.txt | sed 's/%/%25/g; s/\r/%0D/g' | paste -sd '\n' - | sed ':a;N;$!ba;s/\n/%0A/g' | cut -c1-6000)
+              echo "::error title=Aether dynamic symbols::$SYMBOLS"
+              exit 1
+            }
             readelf -h app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Machine:.*AArch64" || llvm-readelf -h app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "AArch64"
             echo "libaether.so ELF + exports OK"
           else
@@ -365,6 +382,7 @@ jobs:
           name: gradle-logs-and-unit-results
           path: |
             /tmp/gradle_compile.log
+            /tmp/gradle_remote_test.log
             /tmp/gradle_test.log
             /tmp/gradle_assemble.log
             app/build/test-results/**/TEST-*.xml
