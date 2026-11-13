@@ -1,8 +1,6 @@
 package com.manjaniq.remotecontrol
 
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -86,7 +84,7 @@ class RemoteControlSessionTest {
     @Test
     fun updateOnlyBlocksWhenRequiredAndInstalledCodeIsOlder() = runTest {
         val cases = listOf(
-            Triple(true, 2L, false),
+            Triple(true, 2L, true),
             Triple(true, 1L, false),
             Triple(true, 0L, false),
             Triple(false, 99L, false),
@@ -169,9 +167,10 @@ class RemoteControlSessionTest {
         onBlocked: () -> Unit = {},
     ) = RemoteControlSession(
         source = source,
-        // A foreground child scope: advanceUntilIdle() deliberately does not
-        // drain backgroundScope work, which would leave every gate at Checking.
-        scope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job(coroutineContext[Job])),
+        // TestScope itself is the foreground scope: advanceUntilIdle() drains
+        // it, and runTest cancels/waits for its children without a standalone
+        // Job that would remain active after the check completes.
+        scope = this,
         deviceId = { identity },
         versionCode = { version },
         ioDispatcher = StandardTestDispatcher(testScheduler),

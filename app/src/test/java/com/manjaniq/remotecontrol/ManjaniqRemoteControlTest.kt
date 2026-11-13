@@ -24,11 +24,12 @@ class ManjaniqRemoteControlTest {
     @Test
     fun usesFixedHttpsEndpointEncodedIdentityAndBoundedGetSettings() = runBlocking {
         val connection = FakeHttpsConnection(URL(ManjaniqRemoteControl.CHECK_ENDPOINT), 200, """{"is_banned":false}""")
-        val client = ManjaniqRemoteControl { connection }
+        var requestedUrl: URL? = null
+        val client = ManjaniqRemoteControl { requestedUrl = it; connection }
         assertEquals(RemotePolicy(), client.fetch("a&b /+?"))
         assertEquals(
             "https://manjaniq-hub.manjaniqhub.workers.dev/api/check?device_id=a%26b+%2F%2B%3F",
-            connection.url.toString(),
+            requestedUrl.toString(),
         )
         assertEquals("GET", connection.requestMethod)
         assertEquals(3_000, connection.connectTimeout)
