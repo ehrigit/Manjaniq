@@ -1415,10 +1415,10 @@ object AetherCoreManager {
         // IPv6 route resolution failures due to Android's unprivileged netlink
         // restrictions are non-fatal: psiphon falls back to IPv4 and the tunnel
         // keeps running. Do not treat them as chain-ending events.
-        if (line.contains("netlinkrib")
-            || line.contains("hasRoutableIPv6Interface")
-            || line.contains("unable to determine IPv6 route")
-            || line.contains("route ip+net")) {
+        if (line.contains("netlinkrib") ||
+            line.contains("hasRoutableIPv6Interface") ||
+            line.contains("unable to determine IPv6 route") ||
+            line.contains("route ip+net")) {
             return null
         }
         chainEndWords.firstOrNull { line.startsWith(it) }?.let { prefix ->
