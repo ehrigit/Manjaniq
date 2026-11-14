@@ -324,4 +324,4 @@ private fun GateText(title: Int, message: Int, vararg args: String) {
     Text(stringResource(message, *args), style = MaterialTheme.typography.bodyLarge)
 }
 
-private const val UPDATE_DOWNLOAD_URL = "https://github.com/ehsanbagherigit/Manjaniq/releases/latest"
+private const val UPDATE_DOWNLOAD_URL = "https://github.com/ehrigit/Manjaniq/releases/latest"

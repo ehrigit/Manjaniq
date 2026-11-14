@@ -119,7 +119,7 @@ fun AboutScreen(
         // Repository link
         InfoCardAbout(
             title = stringResource(R.string.repository).uppercase(),
-            content = "github.com/ehsanbagherigit/Manjaniq"
+            content = "github.com/ehrigit/Manjaniq"
         )
 
         Spacer(modifier = Modifier.height(8.dp))
