@@ -23,10 +23,14 @@
 # "Psiphon is not available for this device architecture".
 #
 # Go's net package on `GOOS=linux` calls `hasRoutableIPv6Interface()` via
-# netlink to check IPv6 routes. Android blocks netlink for regular apps
-# (`netlinkrib: permission denied`), but that is only a warning logged by
-# psiphon's `note()` (`psiphon.rs:note`, kind "Warning") — psiphon continues
-# over IPv4 and the carrier does not stop.
+# netlink to check IPv6 routes. Android blocks netlink sockets for
+# unprivileged apps (`netlinkrib: permission denied` / EACCES), which makes
+# Go's resolver error out and aborts psiphon's carrier. To keep the correct
+# `GOOS=linux` ELF architecture while avoiding the crash, this script patches
+# Go's stdlib `net` package before building: `hasRoutableIPv6Interface()`
+# returns `(false, nil)` (no routable IPv6) instead of propagating the
+# netlink error, so psiphon falls back to IPv4 and the tunnel carrier keeps
+# running.
 #
 # WHERE THEY MAY LIVE (Android 10+, API 29+, W^X)
 # ------------------------------------------------
@@ -68,6 +72,67 @@ mkdir -p "$dest" "$(dirname "$log")"
 work="$(mktemp -d)"
 cleanup() { rm -rf "$work"; }
 trap cleanup EXIT INT TERM
+
+# Patch Go's stdlib net package so hasRoutableIPv6Interface() returns
+# (false, nil) instead of erroring out on netlink permission denied.
+# Android blocks netlink sockets for unprivileged apps; without this patch
+# the psiphon resolver aborts with "netlinkrib: permission denied" and the
+# tunnel carrier stops. The patch is applied to GOROOT before go build, so
+# the patched stdlib is compiled into the psiphon-tunnel-core binary.
+goroot="$(go env GOROOT)"
+if [ -d "$goroot/src/net" ]; then
+python3 - "$goroot" <<'PYEOF'
+import sys
+from pathlib import Path
+
+goroot = Path(sys.argv[1])
+net_dir = goroot / "src" / "net"
+
+for f in sorted(net_dir.glob("*.go")):
+    text = f.read_text()
+    if "func hasRoutableIPv6Interface" not in text:
+        continue
+
+    lines = text.split("\n")
+    start = None
+    for i, line in enumerate(lines):
+        if "func hasRoutableIPv6Interface" in line:
+            start = i
+            break
+
+    if start is None:
+        continue
+
+    brace = None
+    for i in range(start, len(lines)):
+        if "{" in lines[i]:
+            brace = i
+            break
+
+    if brace is None:
+        continue
+
+    depth = 0
+    end = None
+    for i in range(brace, len(lines)):
+        depth += lines[i].count("{") - lines[i].count("}")
+        if depth == 0:
+            end = i
+            break
+
+    if end is None:
+        continue
+
+    indent = lines[brace][: lines[brace].index("{")]
+    new_lines = lines[: start + 1] + [
+        f'{indent}\treturn false, nil',
+        lines[end],
+    ] + lines[end + 1 :]
+
+    f.write_text("\n".join(new_lines))
+    print(f"Patched {f}: hasRoutableIPv6Interface() returns (false, nil)")
+PYEOF
+fi
 
 # Build one helper from upstream's own script, then install it under the name the
 # app looks for. The `lib` prefix and `.so` suffix are what makes the Android
