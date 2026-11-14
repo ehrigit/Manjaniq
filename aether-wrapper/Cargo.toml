@@ -14,18 +14,31 @@ path = "src/lib.rs"
 # Path-pinned to vendored third_party/Aether (v2.4.0 peeled d58f9d5). Avoids git fetch
 # and allows rust-version patch on quiche for CI stable.
 #
-# NO `tor` FEATURE.
+# The `tor` FEATURE IS ON:
 #
-# The `tor` feature pulls arti-client (+ its `pt-client`, `static-sqlite` and
-# `liblzma` dependencies) into libaether.so. The app has no Tor route any more -
-# the Tor routes and their pluggable transports were removed with the engine
-# options screen - and no argument list this app builds ever contains `--tor*`
-# (`AetherConfig.toAetherArgs`), so that code could never run. Without the
-# feature `tor.rs` compiles its `unsupported()` stubs instead
-# (`tor.rs:210-228`), which is upstream's supported non-tor configuration, and
-# the parts of arti, sqlite and liblzma stop being packaged: a third of the
-# shared library's bytes that nothing on this platform could reach.
-aether = { path = "../third_party/Aether/aether" }
+#   aether = { path = "../third_party/Aether/aether", features = ["tor"] }
+#
+# It pulls arti-client (with its pt-client, static-sqlite and liblzma
+# dependencies), tor-chanmgr, tor-rtcompat, tokio-util and tracing-subscriber
+# into libaether.so, so `tor.rs` compiles `with_tor` instead of the
+# `unsupported()` stubs (`tor.rs:210-228`). Without it every --tor /
+# --tor-reverse / --psiphon-reverse route aborts with
+# "this build has no tor support; rebuild with cargo build --release --features
+# tor". The app's argument list (`AetherCoreManager.buildArguments`) passes
+# `--tor`, `--tor-reverse`, `--psiphon` and `--psiphon-reverse` straight through
+# to `aether_core_start`, so enabling this feature is what the build lacked.
+#
+# The companion crates make libaether.so grow; that is the size of Tor support
+# and is accepted. The release profile below still strips symbols and uses thin
+# LTO, and `cargo ndk` in CI builds every target with the features declared
+# here (no extra `--features` flag needed).
+#
+# Build requirements for these extra crates, all met by the CI job
+# (.github/workflows/build-debug.yml): an NDK clang for the C code
+# (rusqlite's `static-sqlite` and `liblzma`'s `static` both compile C sources;
+# cargo-ndk exports CC for the target), and cmake/perl/pkg-config, which the
+# job installs before the Rust build.
+aether = { path = "../third_party/Aether/aether", features = ["tor"] }
 # Match the vendored Aether Cargo.lock. The wrapper is its own workspace root,
 # so the path dependency's lock is not honored here; floating "5.3" recently
 # resolved boring-sys 5.5.0, whose Android x86_64 bindgen output fails with
