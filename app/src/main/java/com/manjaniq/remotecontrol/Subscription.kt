@@ -190,20 +190,23 @@ internal object SubscriptionDates {
                 else -> null
             }
         }
+        // Only direct members of these concrete classes are used: the Android
+        // platform stubs do not expose every inherited java.time.chrono method.
         runCatching { Instant.parse(text) }.getOrNull()?.let { return it.toEpochMilli() }
-        runCatching { OffsetDateTime.parse(text) }.getOrNull()?.let { return it.toEpochMilli() }
+        runCatching { OffsetDateTime.parse(text) }.getOrNull()
+            ?.let { return it.toInstant().toEpochMilli() }
         runCatching { LocalDateTime.parse(text) }.getOrNull()
             ?.let { return it.toInstant(ZoneOffset.UTC).toEpochMilli() }
         runCatching { LocalDate.parse(text) }.getOrNull()?.let { day ->
             // A date without a time stays valid through the end of that UTC day.
-            val nextDay = day.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+            val nextDay = day.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
             return nextDay - 1L
         }
         return null
     }
 
     fun displayDate(epochMillis: Long): String = DateTimeFormatter.ISO_LOCAL_DATE.format(
-        Instant.ofEpochMilli(epochMillis).atZone(ZoneOffset.UTC).toLocalDate(),
+        Instant.ofEpochMilli(epochMillis).atOffset(ZoneOffset.UTC).toLocalDate(),
     )
 }
 
