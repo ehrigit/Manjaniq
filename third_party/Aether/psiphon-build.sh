@@ -231,6 +231,7 @@ for go_file in sorted(src.rglob("*.go")):
         print(f"Patched {go_file}: DoFileMigration() skips missing old path")
     else:
         print(f"Warning: DoFileMigration() found in {go_file} but no 'old path does not exist' return to patch")
+PYEOF
 
 ext=""
 if [ "$goos" = "windows" ]; then

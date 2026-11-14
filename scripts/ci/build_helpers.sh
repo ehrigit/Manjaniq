@@ -80,7 +80,11 @@ trap cleanup EXIT INT TERM
 # tunnel carrier stops. The patch is applied to GOROOT before go build, so
 # the patched stdlib is compiled into the psiphon-tunnel-core binary.
 goroot="$(go env GOROOT)"
-if [ -d "$goroot/src/net" ]; then
+if [ -z "$goroot" ]; then
+  echo "::warning::go not available; skipping netlink patch (psiphon may crash on EACCES)"
+elif [ ! -d "$goroot/src/net" ]; then
+  echo "::warning::GOROOT/src/net not found ($goroot/src/net); skipping netlink patch"
+else
 python3 - "$goroot" <<'PYEOF'
 import sys
 from pathlib import Path
@@ -88,11 +92,14 @@ from pathlib import Path
 goroot = Path(sys.argv[1])
 net_dir = goroot / "src" / "net"
 
+patched_any = False
+found_any = False
 for f in sorted(net_dir.glob("*.go")):
     text = f.read_text()
     if "func hasRoutableIPv6Interface" not in text:
         continue
 
+    found_any = True
     lines = text.split("\n")
     start = None
     for i, line in enumerate(lines):
@@ -131,7 +138,18 @@ for f in sorted(net_dir.glob("*.go")):
 
     f.write_text("\n".join(new_lines))
     print(f"Patched {f}: hasRoutableIPv6Interface() returns (false, nil)")
+    patched_any = True
+
+if not found_any:
+    print(f"Warning: hasRoutableIPv6Interface not found in {net_dir}")
+    sys.exit(1)
+elif not patched_any:
+    print(f"Warning: hasRoutableIPv6Interface found but not patched in {net_dir}")
+    sys.exit(1)
 PYEOF
+    if [ $? -ne 0 ]; then
+      echo "::warning::Go stdlib netlink patch did not apply cleanly - psiphon carrier may crash on EACCES"
+    fi
 fi
 
 # Build one helper from upstream's own script, then install it under the name the
