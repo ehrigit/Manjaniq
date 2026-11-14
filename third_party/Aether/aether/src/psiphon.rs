@@ -742,6 +742,10 @@ fn expected_without_inproxy(text: &str) -> bool {
     text.contains("DSL fetch failed")
         || text.contains("no broker specs")
         || text.contains("tactics request aborted: no capable servers")
+        || text.contains("netlinkrib")
+        || text.contains("hasRoutableIPv6Interface")
+        || text.contains("unable to determine IPv6 route")
+        || text.contains("route ip+net")
 }
 
 fn pick<'a>(message: &'a str, data: &'a serde_json::Value) -> String {

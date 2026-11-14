@@ -1411,10 +1411,20 @@ object AetherCoreManager {
     internal fun isNoEchKeyWord(line: String): Boolean =
         noEchKeyWord.containsMatchIn(line)
 
-    internal fun chainEndReasonOf(line: String): String? =
+    internal fun chainEndReasonOf(line: String): String? {
+        // IPv6 route resolution failures due to Android's unprivileged netlink
+        // restrictions are non-fatal: psiphon falls back to IPv4 and the tunnel
+        // keeps running. Do not treat them as chain-ending events.
+        if (line.contains("netlinkrib")
+            || line.contains("hasRoutableIPv6Interface")
+            || line.contains("unable to determine IPv6 route")
+            || line.contains("route ip+net")) {
+            return null
+        }
         chainEndWords.firstOrNull { line.startsWith(it) }?.let { prefix ->
             line.removePrefix(prefix).trim().ifEmpty { null }
         }
+    }
 
     private val chainEndWords = listOf("[-] tor: ", "[-] psiphon: ")
 
