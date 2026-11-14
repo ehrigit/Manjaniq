@@ -8,9 +8,12 @@
 #
 # It is built exactly the way upstream's own Android release job builds it
 # (third_party/Aether/.github/workflows/release.yml, `android` job): as static
-# `GOOS=linux CGO_ENABLED=0` ELFs. A pure-Go binary needs no libc at all, so the
-# same file runs under Android and Termux - which is why the check in that job is
-# `GOOS=linux`, not `GOOS=android` (android would need cgo).
+# `GOOS=android CGO_ENABLED=0` ELFs. A pure-Go binary needs no libc at all, so the
+# same file runs under Android and Termux. Building with `GOOS=android` (rather
+# than `GOOS=linux`) makes Go's net package use Android-appropriate networking
+# code: `hasRoutableIPv6Interface()` falls back to "no IPv6" instead of opening
+# a netlink socket, which Android blocks for regular apps
+# (`netlinkrib: permission denied` - the psiphon carrier stop error).
 #
 # WHERE THEY MAY LIVE (Android 10+, API 29+, W^X)
 # ------------------------------------------------
@@ -62,7 +65,7 @@ build_one() {
   local out="$work/pt"
 
   printf '\n=== %s (%s) ===\n' "$label" "$goarch" >> "$log"
-  if ! bash "$repo/third_party/Aether/$script" linux "$goarch" "$out" >> "$log" 2>&1; then
+  if ! bash "$repo/third_party/Aether/$script" android "$goarch" "$out" >> "$log" 2>&1; then
     echo "::warning title=Helper not built::$label for $goarch - upstream script $script failed, see $log" >&2
     echo "$label=no"
     return 1
