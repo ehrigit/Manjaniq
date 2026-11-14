@@ -6,14 +6,27 @@
 # at it with `--psiphon-bin`. (The Tor pluggable transport was removed together
 # with the Tor routes, so lyrebird is no longer built or packaged.)
 #
-# It is built exactly the way upstream's own Android release job builds it
-# (third_party/Aether/.github/workflows/release.yml, `android` job): as static
-# `GOOS=android CGO_ENABLED=0` ELFs. A pure-Go binary needs no libc at all, so the
-# same file runs under Android and Termux. Building with `GOOS=android` (rather
-# than `GOOS=linux`) makes Go's net package use Android-appropriate networking
-# code: `hasRoutableIPv6Interface()` falls back to "no IPv6" instead of opening
-# a netlink socket, which Android blocks for regular apps
-# (`netlinkrib: permission denied` - the psiphon carrier stop error).
+# It is built exactly the way PattNG and upstream psiphon-tunnel-core build it
+# (psiphon-tunnel-core/ClientLibrary/make.bash, `build_for_linux`): as static
+# `GOOS=linux CGO_ENABLED=0` ELFs, cross-compiled per target ABI. The binary is a
+# standalone static sidecar (./ConsoleClient), not a Go Android library, so it is
+# built for `linux/<arch>` and then staged into `jniLibs/<abi>/` under the name
+# the app expects (`libpsiphon_tunnel_core.so`). Android's PackageManager extracts
+# `lib*.so` entries from `jniLibs/<abi>/` into the app's read-only native library
+# directory at install time, and the runtime loader matches the ELF machine type
+# (`aarch64` for arm64-v8a, `x86_64` for x86_64) against the device's CPU.
+#
+# `GOOS=android` must NOT be used here: a Go binary built for `android/<arch>`
+# carries an Android OS tag in its ELF headers that Android's native library
+# loader does not match against the device ABI (`arm64-v8a`/`x86_64`), so the
+# file is not extracted and `hasPsiphon()` returns false — surfacing as
+# "Psiphon is not available for this device architecture".
+#
+# Go's net package on `GOOS=linux` calls `hasRoutableIPv6Interface()` via
+# netlink to check IPv6 routes. Android blocks netlink for regular apps
+# (`netlinkrib: permission denied`), but that is only a warning logged by
+# psiphon's `note()` (`psiphon.rs:note`, kind "Warning") — psiphon continues
+# over IPv4 and the carrier does not stop.
 #
 # WHERE THEY MAY LIVE (Android 10+, API 29+, W^X)
 # ------------------------------------------------
@@ -65,7 +78,7 @@ build_one() {
   local out="$work/pt"
 
   printf '\n=== %s (%s) ===\n' "$label" "$goarch" >> "$log"
-  if ! bash "$repo/third_party/Aether/$script" android "$goarch" "$out" >> "$log" 2>&1; then
+  if ! bash "$repo/third_party/Aether/$script" linux "$goarch" "$out" >> "$log" 2>&1; then
     echo "::warning title=Helper not built::$label for $goarch - upstream script $script failed, see $log" >&2
     echo "$label=no"
     return 1
