@@ -5,7 +5,7 @@
     <string name="remote_control_update_title">به‌روزرسانی لازم است</string>
     <string name="remote_control_update_message">برای ادامه، نگارش منجانیق با کد نسخهٔ %1$s یا جدیدتر را نصب کنید. این نگارش دیگر به برنامه و موتورهای پراکسی دسترسی ندارد.</string>
     <string name="remote_control_open_update">باز کردن آخرین انتشار</string>
-    <string name="remote_control_update_unavailable">مرورگری در دسترس نیست. نشانی github.com/ehsanbagherigit/Manjaniq/releases را در دستگاه دیگری باز کنید و جدیدترین APK را نصب کنید.</string>
+    <string name="remote_control_update_unavailable">مرورگری در دسترس نیست. نشانی github.com/ehrigit/Manjaniq/releases را در دستگاه دیگری باز کنید و جدیدترین APK را نصب کنید.</string>
     <string name="remote_control_retry">بررسی دوباره</string>
     <string name="remote_control_password_title">گذرواژهٔ برنامه</string>
     <string name="remote_control_password_message">برای ادامه، گذرواژه‌ای را که مدیر برنامه در اختیار شما گذاشته است وارد کنید.</string>

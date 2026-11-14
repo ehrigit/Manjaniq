@@ -6,11 +6,31 @@
 # at it with `--psiphon-bin`. (The Tor pluggable transport was removed together
 # with the Tor routes, so lyrebird is no longer built or packaged.)
 #
-# It is built exactly the way upstream's own Android release job builds it
-# (third_party/Aether/.github/workflows/release.yml, `android` job): as static
-# `GOOS=linux CGO_ENABLED=0` ELFs. A pure-Go binary needs no libc at all, so the
-# same file runs under Android and Termux - which is why the check in that job is
-# `GOOS=linux`, not `GOOS=android` (android would need cgo).
+# It is built exactly the way PattNG and upstream psiphon-tunnel-core build it
+# (psiphon-tunnel-core/ClientLibrary/make.bash, `build_for_linux`): as static
+# `GOOS=linux CGO_ENABLED=0` ELFs, cross-compiled per target ABI. The binary is a
+# standalone static sidecar (./ConsoleClient), not a Go Android library, so it is
+# built for `linux/<arch>` and then staged into `jniLibs/<abi>/` under the name
+# the app expects (`libpsiphon_tunnel_core.so`). Android's PackageManager extracts
+# `lib*.so` entries from `jniLibs/<abi>/` into the app's read-only native library
+# directory at install time, and the runtime loader matches the ELF machine type
+# (`aarch64` for arm64-v8a, `x86_64` for x86_64) against the device's CPU.
+#
+# `GOOS=android` must NOT be used here: a Go binary built for `android/<arch>`
+# carries an Android OS tag in its ELF headers that Android's native library
+# loader does not match against the device ABI (`arm64-v8a`/`x86_64`), so the
+# file is not extracted and `hasPsiphon()` returns false — surfacing as
+# "Psiphon is not available for this device architecture".
+#
+# Go's net package on `GOOS=linux` calls `hasRoutableIPv6Interface()` via
+# netlink to check IPv6 routes. Android blocks netlink sockets for
+# unprivileged apps (`netlinkrib: permission denied` / EACCES), which makes
+# Go's resolver error out and aborts psiphon's carrier. To keep the correct
+# `GOOS=linux` ELF architecture while avoiding the crash, this script patches
+# Go's stdlib `net` package before building: `hasRoutableIPv6Interface()`
+# returns `(false, nil)` (no routable IPv6) instead of propagating the
+# netlink error, so psiphon falls back to IPv4 and the tunnel carrier keeps
+# running.
 #
 # WHERE THEY MAY LIVE (Android 10+, API 29+, W^X)
 # ------------------------------------------------
@@ -52,6 +72,85 @@ mkdir -p "$dest" "$(dirname "$log")"
 work="$(mktemp -d)"
 cleanup() { rm -rf "$work"; }
 trap cleanup EXIT INT TERM
+
+# Patch Go's stdlib net package so hasRoutableIPv6Interface() returns
+# (false, nil) instead of erroring out on netlink permission denied.
+# Android blocks netlink sockets for unprivileged apps; without this patch
+# the psiphon resolver aborts with "netlinkrib: permission denied" and the
+# tunnel carrier stops. The patch is applied to GOROOT before go build, so
+# the patched stdlib is compiled into the psiphon-tunnel-core binary.
+goroot="$(go env GOROOT)"
+if [ -z "$goroot" ]; then
+  echo "::warning::go not available; skipping netlink patch (psiphon may crash on EACCES)"
+elif [ ! -d "$goroot/src/net" ]; then
+  echo "::warning::GOROOT/src/net not found ($goroot/src/net); skipping netlink patch"
+else
+python3 - "$goroot" <<'PYEOF'
+import sys
+from pathlib import Path
+
+goroot = Path(sys.argv[1])
+net_dir = goroot / "src" / "net"
+
+patched_any = False
+found_any = False
+for f in sorted(net_dir.glob("*.go")):
+    text = f.read_text()
+    if "func hasRoutableIPv6Interface" not in text:
+        continue
+
+    found_any = True
+    lines = text.split("\n")
+    start = None
+    for i, line in enumerate(lines):
+        if "func hasRoutableIPv6Interface" in line:
+            start = i
+            break
+
+    if start is None:
+        continue
+
+    brace = None
+    for i in range(start, len(lines)):
+        if "{" in lines[i]:
+            brace = i
+            break
+
+    if brace is None:
+        continue
+
+    depth = 0
+    end = None
+    for i in range(brace, len(lines)):
+        depth += lines[i].count("{") - lines[i].count("}")
+        if depth == 0:
+            end = i
+            break
+
+    if end is None:
+        continue
+
+    indent = lines[brace][: lines[brace].index("{")]
+    new_lines = lines[: start + 1] + [
+        f'{indent}\treturn false, nil',
+        lines[end],
+    ] + lines[end + 1 :]
+
+    f.write_text("\n".join(new_lines))
+    print(f"Patched {f}: hasRoutableIPv6Interface() returns (false, nil)")
+    patched_any = True
+
+if not found_any:
+    print(f"Warning: hasRoutableIPv6Interface not found in {net_dir}")
+    sys.exit(1)
+elif not patched_any:
+    print(f"Warning: hasRoutableIPv6Interface found but not patched in {net_dir}")
+    sys.exit(1)
+PYEOF
+    if [ $? -ne 0 ]; then
+      echo "::warning::Go stdlib netlink patch did not apply cleanly - psiphon carrier may crash on EACCES"
+    fi
+fi
 
 # Build one helper from upstream's own script, then install it under the name the
 # app looks for. The `lib` prefix and `.so` suffix are what makes the Android

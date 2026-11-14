@@ -5,7 +5,7 @@
     <string name="remote_control_update_title">Update required</string>
     <string name="remote_control_update_message">Install Manjaniq version code %1$s or newer to continue. This version can no longer access the app or its proxy engines.</string>
     <string name="remote_control_open_update">Open latest release</string>
-    <string name="remote_control_update_unavailable">No browser is available. Open github.com/ehsanbagherigit/Manjaniq/releases on another device and install the latest APK.</string>
+    <string name="remote_control_update_unavailable">No browser is available. Open github.com/ehrigit/Manjaniq/releases on another device and install the latest APK.</string>
     <string name="remote_control_retry">Check again</string>
     <string name="remote_control_password_title">App password</string>
     <string name="remote_control_password_message">Enter the app password provided by your administrator to continue.</string>
