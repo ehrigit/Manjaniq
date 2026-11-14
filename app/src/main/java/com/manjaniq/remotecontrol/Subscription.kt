@@ -61,8 +61,6 @@ data class SubscriptionSnapshot(
  * the fail-open side of the contract.
  */
 internal data class SubscriptionInfo(
-    /** True when at least one of the four documented fields was present. */
-    val hasFields: Boolean = false,
     /** Human-readable expiry, empty when absent or unparseable. */
     val expireDisplay: String = "",
     val expiresAtMillis: Long? = null,
@@ -70,8 +68,18 @@ internal data class SubscriptionInfo(
     val trafficUsedGb: Double? = null,
     val status: String = "",
 ) {
-    /** Data arrived, so this subscription is "configured" for the UI. */
-    val isConfigured: Boolean get() = hasFields
+    /**
+     * "Configured" means the backend supplied at least one usable value. A key
+     * that is present but null, empty or wrongly typed is not data: it must not
+     * turn a fail-open client into a restricted one, and the settings section
+     * keeps showing "Not configured".
+     */
+    val isConfigured: Boolean
+        get() = expiresAtMillis != null ||
+            expireDisplay.isNotEmpty() ||
+            trafficLimitGb != null ||
+            trafficUsedGb != null ||
+            status.isNotEmpty()
 
     fun toSnapshot(checkedAtMillis: Long, reason: SubscriptionBlockReason?): SubscriptionSnapshot =
         SubscriptionSnapshot(
@@ -118,7 +126,6 @@ internal object SubscriptionParser {
         val expireRaw = text(json, "subscription_expire_date")
         val expiresAt = SubscriptionDates.parseExpiryMillis(expireRaw)
         SubscriptionInfo(
-            hasFields = FIELDS.any(json::has),
             expireDisplay = displayExpiry(expireRaw, expiresAt),
             expiresAtMillis = expiresAt,
             trafficLimitGb = number(json, "traffic_limit_gb"),
@@ -177,6 +184,8 @@ internal object SubscriptionParser {
 internal object SubscriptionDates {
     private const val MAX_SECONDS_DIGITS = 10
     private const val MAX_MILLIS_DIGITS = 13
+    /** 1e14 seconds is far beyond any real subscription, and cannot overflow. */
+    private const val MAX_EPOCH_MILLIS = 1.0e14
 
     fun parseExpiryMillis(raw: String): Long? {
         val text = raw.trim()
@@ -188,6 +197,14 @@ internal object SubscriptionDates {
                 text.length <= MAX_SECONDS_DIGITS -> value * 1_000L
                 text.length <= MAX_MILLIS_DIGITS -> value
                 else -> null
+            }
+        }
+        // Epoch fallback for a value with a sign or an embedded separator; a
+        // dotted value such as 1780000000.5 is epoch seconds. Out-of-range
+        // numbers are rejected instead of overflowing into a bogus date.
+        text.toDoubleOrNull()?.let { numeric ->
+            if (numeric.isFinite() && numeric > 0.0 && numeric < MAX_EPOCH_MILLIS) {
+                return (numeric * 1_000.0).toLong()
             }
         }
         // Only direct members of these concrete classes are used: the Android

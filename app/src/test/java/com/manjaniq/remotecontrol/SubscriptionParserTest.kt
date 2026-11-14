@@ -1,18 +1,26 @@
 package com.manjaniq.remotecontrol
 
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
 import java.time.Instant
 
 /**
  * The documented `/api/subscription` contract, including every shape the Worker
  * may realistically return. Parsing must never invent data: absent, null or
  * wrongly-typed fields stay absent, and unparseable bodies are unavailable.
+ *
+ * Robolectric supplies the real org.json implementation: the unit-test stub jar
+ * would return null from every getter and hide the contract entirely.
  */
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [34])
 class SubscriptionParserTest {
     @Test
     fun parsesTheDocumentedTopLevelFields() {
@@ -68,14 +76,27 @@ class SubscriptionParserTest {
     }
 
     @Test
-    fun aPayloadWithoutAnySubscriptionFieldIsNotConfiguredAndNotABlock() {
-        for (body in listOf("{}", """{"is_banned":false}""", """{"traffic_limit_gb":0}""")) {
+    fun aPayloadWithoutUsableSubscriptionDataIsNotConfiguredAndNotABlock() {
+        for (body in listOf(
+            "{}",
+            """{"is_banned":false}""",
+            """{"subscription_status":null,"traffic_limit_gb":null}""",
+            """{"subscription_status":"","subscription_expire_date":""}""",
+        )) {
             val info = SubscriptionParser.parse(body)
             assertNotNull(body, info)
-            val configured = info!!.hasFields
-            assertFalse("$body must not report a configured subscription", configured)
+            assertFalse("$body must not report a configured subscription", info!!.isConfigured)
             assertNull(SubscriptionEvaluator.evaluate(info, NOW))
+            assertFalse(info.toSnapshot(NOW, null).configured)
         }
+    }
+
+    @Test
+    fun aZeroLimitIsConfiguredUnlimitedAndNeverBlocks() {
+        val info = SubscriptionParser.parse("""{"traffic_limit_gb":0,"traffic_used_gb":500}""")!!
+        assertTrue(info.isConfigured)
+        assertFalse(info.toSnapshot(NOW, null).hasTrafficLimit)
+        assertNull(SubscriptionEvaluator.evaluate(info, NOW))
     }
 
     @Test

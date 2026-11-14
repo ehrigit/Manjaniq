@@ -80,8 +80,7 @@ class RemoteControlGateTest {
     @Test
     fun anExpiredSubscriptionShowsIsolatedNodeAndBlocksTheEngine() {
         setBackend(policy = RemotePolicy(), subscription = SubscriptionInfo(
-            hasFields = true,
-            expireDisplay = "2020-01-01",
+                expireDisplay = "2020-01-01",
             expiresAtMillis = 1_577_836_800_000L,
             status = "Active",
         ))
@@ -93,8 +92,7 @@ class RemoteControlGateTest {
 
         // A renewal lifts it without restarting the app.
         app.subscription.info = SubscriptionInfo(
-            hasFields = true,
-            expireDisplay = "2099-01-01",
+                expireDisplay = "2099-01-01",
             expiresAtMillis = 4_070_908_800_000L,
             status = "Active",
         )

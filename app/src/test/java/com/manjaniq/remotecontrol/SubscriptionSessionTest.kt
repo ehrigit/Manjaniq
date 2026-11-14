@@ -319,7 +319,6 @@ class SubscriptionSessionTest {
         expireDate: String = "",
         status: String = "",
     ) = SubscriptionInfo(
-        hasFields = true,
         expireDisplay = expireDate,
         expiresAtMillis = SubscriptionDates.parseExpiryMillis(expireDate),
         trafficLimitGb = limit,
