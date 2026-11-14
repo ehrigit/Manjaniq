@@ -169,7 +169,10 @@ class SubscriptionSessionTest {
     @Test
     fun expiryThatFallsDueWhileTheAppIsOpenBlocksTheNextStart() = runTest {
         var clock = EXPIRY - 1_000L
-        val session = session(subscription = FakeSubscriptionSource(expired()), now = { clock })
+        val session = session(
+            subscription = FakeSubscriptionSource(info(expireDate = EXPIRY_ISO, status = "Active")),
+            now = { clock },
+        )
         session.start()
         advanceUntilIdle()
         // One second before expiry the subscription is still valid.
@@ -282,9 +285,12 @@ class SubscriptionSessionTest {
         assertEquals(RemoteControlState.Allowed, session.state.value)
         assertTrue(session.canStartEngine())
 
-        // A retry re-fetches (that is intentional - the user asked to recheck),
-        // but recreating the session's start cannot add a second poller.
+        // start() is idempotent per session, so it adds neither a second fetch
+        // nor a second poller; an explicit recheck is what re-fetches.
         session.start()
+        runCurrent()
+        assertEquals(1, source.calls)
+        session.retry()
         runCurrent()
         assertEquals(2, source.calls)
         advanceUntilIdle()
@@ -373,7 +379,8 @@ class SubscriptionSessionTest {
     }
 
     private companion object {
-        val EXPIRY: Long = Instant.parse("2026-06-01T12:00:00Z").toEpochMilli()
+        val EXPIRY_ISO: String = "2026-06-01T12:00:00Z"
+        val EXPIRY: Long = Instant.parse(EXPIRY_ISO).toEpochMilli()
         val TEST_NOW: Long = Instant.parse("2026-01-01T00:00:00Z").toEpochMilli()
     }
 }
