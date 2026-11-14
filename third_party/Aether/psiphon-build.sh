@@ -233,6 +233,73 @@ for go_file in sorted(src.rglob("*.go")):
         print(f"Warning: DoFileMigration() found in {go_file} but no 'old path does not exist' return to patch")
 PYEOF
 
+# Patch psiphon-tunnel-core's own resolver hasRoutableIPv6_interface()
+# defined in psiphon/common/resolver/resolver.go. This function invokes
+# net.Interfaces() + net.Interface.Addrs() which can trigger netlink
+# syscalls; Android blocks netlink for unprivileged apps (EACCES),
+# producing "route ip+net: netlinkrib: permission denied" and aborting
+# the tunnel carrier. Patch it to return (false, nil) immediately, so
+# psiphon falls back to IPv4-only resolution and keeps running.
+python3 - "$src" <<'PYEOF'
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+
+target_file = src / "psiphon" / "common" / "resolver" / "resolver.go"
+if not target_file.exists():
+    print(f"Warning: {target_file} not found; skipping hasRoutableIPv6_interface patch")
+    sys.exit(0)
+
+text = target_file.read_text()
+if "func hasRoutableIPv6_interface" not in text:
+    print(f"Warning: hasRoutableIPv6_interface() not found in {target_file}")
+    sys.exit(0)
+
+lines = text.split("\n")
+start = None
+for i, line in enumerate(lines):
+    if "func hasRoutableIPv6_interface" in line:
+        start = i
+        break
+
+if start is None:
+    print(f"Warning: hasRoutableIPv6_interface() signature not found in {target_file}")
+    sys.exit(0)
+
+brace = None
+for i in range(start, len(lines)):
+    if "{" in lines[i]:
+        brace = i
+        break
+
+if brace is None:
+    print(f"Warning: opening brace not found for hasRoutableIPv6_interface() in {target_file}")
+    sys.exit(0)
+
+depth = 0
+end = None
+for i in range(brace, len(lines)):
+    depth += lines[i].count("{") - lines[i].count("}")
+    if depth == 0:
+        end = i
+        break
+
+if end is None:
+    print(f"Warning: closing brace not found for hasRoutableIPv6_interface() in {target_file}")
+    sys.exit(0)
+
+# Replace the entire function body with a single return statement.
+# Use a tab indent, which is standard Go.
+new_lines = lines[: start + 1] + [
+    "\treturn false, nil  // netlink EACCES bypass: Android blocks netlink for unprivileged apps",
+    lines[end],
+] + lines[end + 1 :]
+
+target_file.write_text("\n".join(new_lines))
+print(f"Patched {target_file}: hasRoutableIPv6_interface() returns (false, nil) immediately")
+PYEOF
+
 ext=""
 if [ "$goos" = "windows" ]; then
     ext=".exe"
