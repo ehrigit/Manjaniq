@@ -170,6 +170,68 @@ fi
 git -C "$src" checkout --quiet "$commit" 2>/dev/null ||
     echo "psiphon-build: pinned commit is gone, using $branch as it stands" >&2
 
+# Patch psiphon-tunnel-core to gracefully handle missing BoltDB migration paths.
+# migrationsFromLegacyFilePaths() in config.go unconditionally creates FileMigration
+# entries for psiphon.boltdb with OldPath = MigrateDataStoreDirectory/psiphon.boltdb.
+# On a fresh install MigrateDataStoreDirectory is empty/not set, so the old path does
+# not exist, and DoFileMigration() aborts with "(psiphon.boltdb) old path does not
+# exist", which crashes the tunnel carrier. Patch DoFileMigration() to return nil
+# (skip migration) when the old path does not exist instead of treating it as fatal.
+python3 - "$src" <<'PYEOF'
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+
+for go_file in sorted(src.rglob("*.go")):
+    text = go_file.read_text()
+    if "func DoFileMigration" not in text:
+        continue
+
+    lines = text.split("\n")
+    start = None
+    for i, line in enumerate(lines):
+        if "func DoFileMigration" in line:
+            start = i
+            break
+
+    if start is None:
+        continue
+
+    brace = None
+    for i in range(start, len(lines)):
+        if "{" in lines[i]:
+            brace = i
+            break
+
+    if brace is None:
+        continue
+
+    depth = 0
+    end = None
+    for i in range(brace, len(lines)):
+        depth += lines[i].count("{") - lines[i].count("}")
+        if depth == 0:
+            end = i
+            break
+
+    if end is None:
+        continue
+
+    # Replace "return fmt.Errorf(...old path does not exist...)" with "return nil"
+    patched = False
+    for i in range(start, end + 1):
+        if "old path does not exist" in lines[i] and "return" in lines[i]:
+            indent = lines[i][: lines[i].index("return")]
+            lines[i] = indent + "return nil  // old path does not exist - skip migration on fresh install"
+            patched = True
+
+    if patched:
+        go_file.write_text("\n".join(lines))
+        print(f"Patched {go_file}: DoFileMigration() skips missing old path")
+    else:
+        print(f"Warning: DoFileMigration() found in {go_file} but no 'old path does not exist' return to patch")
+
 ext=""
 if [ "$goos" = "windows" ]; then
     ext=".exe"
