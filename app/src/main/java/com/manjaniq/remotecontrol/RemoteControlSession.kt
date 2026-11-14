@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +20,18 @@ sealed interface RemoteControlState {
     data class UpdateRequired(val latestVersionCode: Long) : RemoteControlState
     data class PasswordRequired(val incorrectAttempt: Boolean = false) : RemoteControlState
     data class Announcement(val message: String) : RemoteControlState
+
+    /**
+     * A configured subscription forbids use (expired, explicitly expired, or
+     * out of traffic). Unlike [Restricted] this is derived from live data and
+     * the device clock, so it lifts by itself once the server reports an
+     * extended subscription - no operator action is required.
+     */
+    data class SubscriptionBlocked(
+        val reason: SubscriptionBlockReason,
+        val snapshot: SubscriptionSnapshot,
+    ) : RemoteControlState
+
     data object Allowed : RemoteControlState
 }
 
@@ -29,6 +42,12 @@ sealed interface RemoteControlState {
  *
  * All state transitions run on the injected main coroutine scope. The service
  * boundary only reads the resulting StateFlow and never performs network IO.
+ *
+ * Subscription state lives in the same process-scoped session: it is fetched
+ * beside the policy check, re-polled on a fixed interval while the process
+ * lives, and re-evaluated against the device clock at every check and at every
+ * engine-start attempt. Nothing is persisted, so an unavailable backend can
+ * only ever widen access (the documented fail-open contract).
  */
 class RemoteControlSession internal constructor(
     private val source: RemotePolicySource,
@@ -39,14 +58,36 @@ class RemoteControlSession internal constructor(
     private val checkTimeoutMs: Long = ManjaniqRemoteControl.CHECK_TIMEOUT_MS,
     private val onAccessBlocked: () -> Unit = {},
     private val registration: DeviceRegistrationSource? = null,
+    private val subscriptionSource: SubscriptionSource? = null,
+    private val now: () -> Long = System::currentTimeMillis,
+    /**
+     * Scope for the long-lived monitoring loop only. It defaults to [scope];
+     * host tests pass a background scope so the permanent loop cannot keep the
+     * test's virtual clock busy.
+     */
+    private val monitorScope: CoroutineScope = scope,
 ) {
     private val _state = MutableStateFlow<RemoteControlState>(RemoteControlState.Checking)
     val state: StateFlow<RemoteControlState> = _state.asStateFlow()
 
+    private val _subscription = MutableStateFlow(SubscriptionSnapshot())
+    /** Display-safe mirror for the settings section; never a credential. */
+    val subscription: StateFlow<SubscriptionSnapshot> = _subscription.asStateFlow()
+
+    /**
+     * The last successfully fetched payload, or null when the backend never
+     * returned subscription fields. Enforcement reads this instead of the
+     * display snapshot, so the rule stays a pure function of data + clock.
+     */
+    @Volatile
+    private var latestSubscription: SubscriptionInfo? = null
+
     private var started = false
     private var registrationStarted = false
+    private val subscriptionPolling = java.util.concurrent.atomic.AtomicBoolean(false)
     private var expectedPasswordDigest: ByteArray? = null
     private var verifiedPasswordDigest: ByteArray? = null
+    private var announcement: String = ""
 
     /** Idempotent: composition/recreation must not repeat prompts or polls. */
     fun start() {
@@ -54,15 +95,31 @@ class RemoteControlSession internal constructor(
         started = true
         launchRegistration()
         check()
+        // Beside the gate, never in front of it: a subscription fetch cannot
+        // delay the startup decision.
+        refreshSubscription()
+        startSubscriptionPolling()
     }
 
     /** An operator can remove a restriction without forcing an app restart. */
     fun retry() {
         if (_state.value is RemoteControlState.Checking) return
+        refreshSubscription()
         check()
     }
 
-    fun canStartEngine(): Boolean = _state.value is RemoteControlState.Allowed
+    /**
+     * Authorization for both engine services and the Home screen.
+     *
+     * Deliberately read-only and free of side effects: `EngineService` and
+     * `AetherService` call it from their own threads right before a start, so
+     * it must never mutate state. Subscription data is evaluated here with the
+     * device clock, which means an expiry or a spent quota that fell due while
+     * the app was open refuses that start. The published state is updated by the
+     * session's own scope, so the restriction surface takes over concurrently.
+     */
+    fun canStartEngine(): Boolean =
+        _state.value is RemoteControlState.Allowed && currentSubscriptionRestriction() == null
 
     /**
      * Best-effort first-launch telemetry. It runs beside the policy check, is
@@ -103,7 +160,7 @@ class RemoteControlSession internal constructor(
 
     fun acknowledgeAnnouncement() {
         if (_state.value is RemoteControlState.Announcement) {
-            _state.value = RemoteControlState.Allowed
+            _state.value = subscriptionStateAfterAccess()
         }
     }
 
@@ -155,7 +212,10 @@ class RemoteControlSession internal constructor(
         // an earlier check. Nothing restrictive is written to disk.
         if (policy == null) {
             verifiedPasswordDigest = null
-            _state.value = RemoteControlState.Allowed
+            // A subscription the backend did report is evaluated independently
+            // of the policy response, so re-derive it instead of dropping it.
+            _state.value = subscriptionStateAfterAccess()
+            blockIfRestricted()
             return
         }
         val installedVersion = versionCode()
@@ -171,32 +231,187 @@ class RemoteControlSession internal constructor(
         // shown immediately after a successful verification.
         announcement = policy.announcement.takeIf { it.isNotBlank() }.orEmpty()
 
+        // Operator bans and mandatory updates are policy decisions and keep
+        // their precedence. A subscription restriction follows them and
+        // precedes the password prompt, because it is not user-unlockable.
+        val blocked = currentSubscriptionRestriction()
         _state.value = when {
             policy.isBanned -> RemoteControlState.Restricted
             updateRequired -> RemoteControlState.UpdateRequired(policy.latestVersionCode!!)
+            blocked != null -> blockedState(blocked)
             expectedPasswordDigest != null && !alreadyVerified -> RemoteControlState.PasswordRequired()
             else -> announcementState()
         }
-        if (_state.value !is RemoteControlState.Allowed) {
-            // Use existing public Stop requests only. Native lifecycle, transport
-            // protocols and the services' Stop handlers remain untouched.
-            try {
-                onAccessBlocked()
-            } catch (_: Exception) {
-                // A stop-request failure must not turn a confirmed restriction
-                // into an allow, or crash the startup gate.
-            }
-        }
+        blockIfRestricted()
     }
 
-    private var announcement: String = ""
+    private fun blockIfRestricted() {
+        if (_state.value is RemoteControlState.Allowed) return
+        // Use existing public Stop requests only. Native lifecycle, transport
+        // protocols and the services' Stop handlers remain untouched.
+        try {
+            onAccessBlocked()
+        } catch (_: Exception) {
+            // A stop-request failure must not turn a confirmed restriction
+            // into an allow, or crash the startup gate.
+        }
+    }
 
     private fun announcementState(): RemoteControlState =
         if (announcement.isEmpty()) RemoteControlState.Allowed
         else RemoteControlState.Announcement(announcement)
 
     private fun showAnnouncementOrAllow() {
-        _state.value = if (announcement.isEmpty()) RemoteControlState.Allowed
-        else RemoteControlState.Announcement(announcement)
+        val blocked = currentSubscriptionRestriction()
+        _state.value = when {
+            blocked != null -> blockedState(blocked)
+            announcement.isEmpty() -> RemoteControlState.Allowed
+            else -> RemoteControlState.Announcement(announcement)
+        }
+    }
+
+    /** State a password/notice transition lands on, honouring the quota. */
+    private fun subscriptionStateAfterAccess(): RemoteControlState {
+        val blocked = currentSubscriptionRestriction()
+        return if (blocked == null) RemoteControlState.Allowed else blockedState(blocked)
+    }
+
+    private fun blockedState(reason: SubscriptionBlockReason): RemoteControlState.SubscriptionBlocked {
+        val snapshot = _subscription.value
+        val current = if (snapshot.blockedReason == reason) {
+            snapshot
+        } else {
+            snapshot.copy(blockedReason = reason).also { _subscription.value = it }
+        }
+        return RemoteControlState.SubscriptionBlocked(reason, current)
+    }
+
+    /**
+     * The current subscription restriction, evaluated with the device clock.
+     *
+     * Enforcement only applies when subscription data is actually present, so
+     * `null` means "unconstrained": no data, a payload with no subscription
+     * fields, an unreachable endpoint, or an invalid response.
+     */
+    private fun currentSubscriptionRestriction(): SubscriptionBlockReason? {
+        val info = latestSubscription?.takeIf { it.isConfigured } ?: return null
+        return SubscriptionEvaluator.evaluate(info, now())
+    }
+
+    // ---- subscription refresh -------------------------------------------------
+
+    /**
+     * Re-polls the endpoint once for this process. Bounded by
+     * [ManjaniqSubscription.REFRESH_TIMEOUT_MS]; every failure is swallowed
+     * because an unavailable subscription endpoint must never block local use.
+     */
+    fun refreshSubscription() {
+        val source = subscriptionSource ?: return
+        val identity = deviceId()?.takeUnless { it.isNullOrBlank() } ?: return
+        scope.launch {
+            try {
+                val fetched = try {
+                    // Own Deferred in the application scope: a blocked socket
+                    // cannot hold the caller past the deadline.
+                    val request = async(ioDispatcher) {
+                        try {
+                            source.fetch(identity)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+                    try {
+                        withTimeoutOrNull(ManjaniqSubscription.REFRESH_TIMEOUT_MS) { request.await() }
+                    } finally {
+                        if (!request.isCompleted) {
+                            request.cancel()
+                            source.cancelPending()
+                        }
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                applySubscription(fetched, now())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Publishing must not crash the application scope.
+            }
+        }
+    }
+
+    /**
+     * Stores the newest data and re-applies the gate.
+     *
+     * Only a payload that actually carries subscription fields is enforced.
+     * A failed fetch (null), an invalid body, or a 200 response without any
+     * subscription field all mean "not configured": the payload is cleared, the
+     * section shows "Not configured" and any subscription restriction lifts, so
+     * the user keeps normal app and proxy operation. This is the required
+     * fail-open behaviour and the reason nothing here is persisted.
+     */
+    private fun applySubscription(fetched: SubscriptionInfo?, atMillis: Long) {
+        val info = fetched?.takeIf { it.isConfigured }
+        latestSubscription = info
+        _subscription.value = if (info != null) {
+            info.toSnapshot(atMillis, SubscriptionEvaluator.evaluate(info, atMillis))
+        } else {
+            // Nothing enforceable arrived: publish the unconstrained snapshot so
+            // the section shows "Not configured" and access stays open.
+            SubscriptionSnapshot(checkedAtMillis = atMillis)
+        }
+        reapplyGateForSubscription()
+    }
+
+    /**
+     * Re-runs the gate decision from the state already held. A confirmed ban,
+     * update requirement, password requirement or pending notice is never
+     * downgraded by a subscription refresh; an expired/over-quota subscription
+     * replaces an allow state, and lifting it returns to that state.
+     */
+    private fun reapplyGateForSubscription() {
+        val state = _state.value
+        // The startup check owns these states: it re-evaluates the subscription
+        // itself when it lands, so a refresh must not race it.
+        if (state !is RemoteControlState.Allowed && state !is RemoteControlState.SubscriptionBlocked) {
+            return
+        }
+        val blocked = currentSubscriptionRestriction()
+        val next = if (blocked != null) blockedState(blocked) else RemoteControlState.Allowed
+        _state.value = next
+        // Stop the engines only on the transition into a restriction. A poll
+        // that finds the same block again must not repeat Stop requests.
+        if (state is RemoteControlState.Allowed && next is RemoteControlState.SubscriptionBlocked) {
+            blockIfRestricted()
+        }
+    }
+
+    /**
+     * Fixed-interval monitoring for as long as this OS process lives. It is
+     * idempotent (one loop per session) and makes no request when no
+     * subscription source is wired, so offline composition roots stay silent.
+     */
+    private fun startSubscriptionPolling() {
+        if (subscriptionSource == null) return
+        if (!subscriptionPolling.compareAndSet(false, true)) return
+        monitorScope.launch {
+            while (true) {
+                delay(SUBSCRIPTION_POLL_INTERVAL_MS)
+                refreshSubscription()
+            }
+        }
+    }
+
+    internal companion object {
+        /**
+         * Five minutes: often enough to enforce an expiry shortly after it
+         * falls due while the app is in use, cheap enough to remain a single
+         * bounded JSON GET on the control plane.
+         */
+        internal const val SUBSCRIPTION_POLL_INTERVAL_MS = 5 * 60 * 1_000L
     }
 }

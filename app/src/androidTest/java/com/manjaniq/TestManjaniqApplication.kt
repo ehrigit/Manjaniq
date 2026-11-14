@@ -5,6 +5,8 @@ import com.manjaniq.remotecontrol.DeviceRegistrationSource
 import com.manjaniq.remotecontrol.RemoteControlSession
 import com.manjaniq.remotecontrol.RemotePolicy
 import com.manjaniq.remotecontrol.RemotePolicySource
+import com.manjaniq.remotecontrol.SubscriptionInfo
+import com.manjaniq.remotecontrol.SubscriptionSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
  */
 internal class TestManjaniqApplication : Application(), RemoteControlHost {
     val source = DevicePolicySource()
+    val subscription = DeviceSubscriptionSource()
     override val remoteControl: RemoteControlSession by lazy {
         RemoteControlSession(
             source = source,
@@ -23,6 +26,7 @@ internal class TestManjaniqApplication : Application(), RemoteControlHost {
             deviceId = { "instrumentation-device" },
             versionCode = { 1L },
             registration = OfflineDeviceRegistrationSource(),
+            subscriptionSource = subscription,
         )
     }
 }
@@ -35,4 +39,10 @@ internal class DevicePolicySource : RemotePolicySource {
 /** Instrumentation must not send telemetry to the live Worker. */
 internal class OfflineDeviceRegistrationSource : DeviceRegistrationSource {
     override suspend fun registerIfNeeded(): Boolean = false
+}
+
+/** Instrumentation must not poll the live subscription endpoint. */
+internal class DeviceSubscriptionSource : SubscriptionSource {
+    @Volatile var info: SubscriptionInfo? = null
+    override suspend fun fetch(deviceId: String): SubscriptionInfo? = info
 }

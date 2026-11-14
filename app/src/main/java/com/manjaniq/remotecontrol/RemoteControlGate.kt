@@ -39,9 +39,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -52,6 +54,8 @@ import com.manjaniq.RemoteControlHost
 internal object RemoteControlTags {
     const val CHECKING = "remote_control_checking"
     const val RESTRICTED = "remote_control_restricted"
+    const val RESTRICTED_MESSAGE = "remote_control_restricted_message"
+    const val SUBSCRIPTION_RESTRICTED = "remote_control_subscription_restricted"
     const val UPDATE = "remote_control_update"
     const val PASSWORD = "remote_control_password"
     const val PASSWORD_INPUT = "remote_control_password_input"
@@ -91,6 +95,7 @@ fun RemoteControlGate(content: @Composable () -> Unit) {
                 GateSurface {
                     when (current) {
                         RemoteControlState.Restricted -> RestrictedContent(session)
+                        is RemoteControlState.SubscriptionBlocked -> SubscriptionBlockedContent(current, session)
                         is RemoteControlState.UpdateRequired -> UpdateContent(current, session)
                         is RemoteControlState.PasswordRequired -> PasswordContent(current, session)
                         is RemoteControlState.Announcement -> AnnouncementContent(current, session)
@@ -142,15 +147,75 @@ private fun GateSurface(content: @Composable () -> Unit) {
     }
 }
 
+/**
+ * The device-restriction surface. It is deliberately a single short title -
+ * "Isolated Node" - so the layout stays balanced at every font scale, in both
+ * LTR and RTL, and at any width: one centred line with the fixed retry action
+ * underneath. No explanatory paragraph, no width assumption, no truncation.
+ */
 @Composable
 private fun RestrictedContent(session: RemoteControlSession) {
     Column(
         modifier = Modifier.fillMaxWidth().testTag(RemoteControlTags.RESTRICTED),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        GateText(R.string.remote_control_restricted_title, R.string.remote_control_restricted_message)
+        Text(
+            text = stringResource(R.string.remote_control_restricted_title),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(RemoteControlTags.RESTRICTED_MESSAGE),
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            softWrap = true,
+        )
         TextButton(onClick = session::retry, modifier = Modifier.testTag(RemoteControlTags.RETRY)) {
             Text(stringResource(R.string.remote_control_retry))
+        }
+    }
+}
+
+/**
+ * Subscription enforcement surface. It shares the same "Isolated Node"
+ * headline as every other restriction, then states which condition applies so
+ * the user knows whether to wait for a renewal. A refresh action re-polls the
+ * endpoint; it never dismisses the restriction by itself.
+ */
+@Composable
+private fun SubscriptionBlockedContent(
+    state: RemoteControlState.SubscriptionBlocked,
+    session: RemoteControlSession,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().testTag(RemoteControlTags.SUBSCRIPTION_RESTRICTED),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.remote_control_restricted_title),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(RemoteControlTags.RESTRICTED_MESSAGE),
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            softWrap = true,
+        )
+        Text(
+            text = stringResource(
+                when (state.reason) {
+                    SubscriptionBlockReason.EXPIRED -> R.string.subscription_blocked_expired
+                    SubscriptionBlockReason.STATUS_EXPIRED -> R.string.subscription_blocked_status
+                    SubscriptionBlockReason.TRAFFIC_EXHAUSTED -> R.string.subscription_blocked_traffic
+                },
+            ),
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+        )
+        TextButton(onClick = session::retry, modifier = Modifier.testTag(RemoteControlTags.RETRY)) {
+            Text(stringResource(R.string.subscription_refresh))
         }
     }
 }

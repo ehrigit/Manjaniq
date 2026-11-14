@@ -29,5 +29,14 @@ object TestTags {
     const val LANGUAGE_EN = "language_en"
     const val LANGUAGE_FA = "language_fa"
 
+    // Dedicated subscription section inside the settings screen.
+    const val SUBSCRIPTION_SECTION = "subscription_section"
+    const val SUBSCRIPTION_NOT_CONFIGURED = "subscription_not_configured"
+    const val SUBSCRIPTION_REFRESH = "subscription_refresh"
+    const val SUBSCRIPTION_BADGE = "subscription_badge"
+    const val SUBSCRIPTION_STATUS_VALUE = "subscription_status_value"
+    const val SUBSCRIPTION_TRAFFIC_VALUE = "subscription_traffic_value"
+    const val SUBSCRIPTION_EXPIRES_VALUE = "subscription_expires_value"
+
     fun drawerItem(route: String): String = DRAWER_ITEM_PREFIX + route
 }

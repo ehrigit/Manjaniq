@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="remote_control_checking">در حال بررسی دسترسی برنامه…</string>
-    <string name="remote_control_restricted_title">دستگاه محدود شده است</string>
-    <string name="remote_control_restricted_message">دسترسی این دستگاه توسط مدیر برنامه محدود شده است. استفاده از برنامه و پراکسی ممکن نیست. اگر فکر می‌کنید این محدودیت اشتباه است، با مدیر تماس بگیرید.</string>
+    <string name="remote_control_restricted_title">Isolated Node</string>
     <string name="remote_control_update_title">به‌روزرسانی لازم است</string>
     <string name="remote_control_update_message">برای ادامه، نگارش منجانیق با کد نسخهٔ %1$s یا جدیدتر را نصب کنید. این نگارش دیگر به برنامه و موتورهای پراکسی دسترسی ندارد.</string>
     <string name="remote_control_open_update">باز کردن آخرین انتشار</string>

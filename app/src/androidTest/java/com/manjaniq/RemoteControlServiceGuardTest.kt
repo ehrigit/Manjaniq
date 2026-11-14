@@ -52,6 +52,11 @@ class RemoteControlServiceGuardTest {
         scenario = AppLaunch.launch()
         compose.waitForTag(RemoteControlTags.RESTRICTED, AppLaunch.STARTUP_TIMEOUT_MS)
         assertEquals(RemoteControlState.Restricted, app.remoteControl.state.value)
+        // The restriction surface is the minimalist "Isolated Node" title.
+        assertEquals(
+            AppLaunch.context.getString(R.string.remote_control_restricted_title),
+            "Isolated Node",
+        )
         assertFalse(app.remoteControl.canStartEngine())
         assertEquals(0, compose.onAllNodesWithTag(TestTags.HOME_SCREEN).fetchSemanticsNodes().size)
 

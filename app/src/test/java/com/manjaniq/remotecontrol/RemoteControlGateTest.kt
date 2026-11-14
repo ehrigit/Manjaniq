@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.Text
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -29,6 +30,15 @@ class RemoteControlGateTest {
     private var contentComposed = false
     private val app get() = ApplicationProvider.getApplicationContext<RemoteControlTestApplication>()
 
+    /**
+     * The session is process-scoped (eagerly built by the host application), so
+     * each test states the two inputs it needs before composing the real gate.
+     */
+    private fun setBackend(policy: RemotePolicy?, subscription: SubscriptionInfo?) {
+        app.source.policy = policy
+        app.subscription.info = subscription
+    }
+
     private fun showGate() {
         compose.activity.setContent {
             ManjaniqTheme {
@@ -42,7 +52,7 @@ class RemoteControlGateTest {
 
     @Test
     fun unavailableBackendImmediatelyShowsExistingContent() {
-        app.source.policy = null
+        setBackend(policy = null, subscription = null)
         showGate()
         compose.onNodeWithText("Existing app content").assertIsDisplayed()
         assertTrue(contentComposed)
@@ -51,21 +61,60 @@ class RemoteControlGateTest {
 
     @Test
     fun restrictionHidesMainUiAndRetryCannotDismissItWithoutAnAllowResponse() {
-        app.source.policy = RemotePolicy(isBanned = true)
+        setBackend(policy = RemotePolicy(isBanned = true), subscription = null)
         showGate()
         compose.onNodeWithTag(RemoteControlTags.RESTRICTED).assertIsDisplayed()
+        // The restriction surface is the minimalist title only.
+        compose.onNodeWithTag(RemoteControlTags.RESTRICTED_MESSAGE)
+            .assertIsDisplayed()
+            .assertTextEquals("Isolated Node")
         assertFalse(contentComposed)
         compose.onNodeWithTag(RemoteControlTags.RETRY).performClick()
         compose.onNodeWithTag(RemoteControlTags.RESTRICTED).assertIsDisplayed()
         assertFalse(app.remoteControl.canStartEngine())
-        app.source.policy = RemotePolicy()
+        setBackend(policy = RemotePolicy(), subscription = null)
         compose.onNodeWithTag(RemoteControlTags.RETRY).performClick()
         compose.onNodeWithText("Existing app content").assertIsDisplayed()
     }
 
     @Test
+    fun anExpiredSubscriptionShowsIsolatedNodeAndBlocksTheEngine() {
+        setBackend(policy = RemotePolicy(), subscription = SubscriptionInfo(
+            hasFields = true,
+            expireDisplay = "2020-01-01",
+            expiresAtMillis = 1_577_836_800_000L,
+            status = "Active",
+        ))
+        showGate()
+        compose.onNodeWithTag(RemoteControlTags.SUBSCRIPTION_RESTRICTED).assertIsDisplayed()
+        compose.onNodeWithTag(RemoteControlTags.RESTRICTED_MESSAGE).assertTextEquals("Isolated Node")
+        assertFalse(contentComposed)
+        assertFalse(app.remoteControl.canStartEngine())
+
+        // A renewal lifts it without restarting the app.
+        app.subscription.info = SubscriptionInfo(
+            hasFields = true,
+            expireDisplay = "2099-01-01",
+            expiresAtMillis = 4_070_908_800_000L,
+            status = "Active",
+        )
+        compose.onNodeWithTag(RemoteControlTags.RETRY).performClick()
+        compose.onNodeWithText("Existing app content").assertIsDisplayed()
+        assertTrue(app.remoteControl.canStartEngine())
+    }
+
+    @Test
+    fun aBackendWithoutSubscriptionDataComposesTheAppNormally() {
+        setBackend(policy = RemotePolicy(), subscription = null)
+        showGate()
+        compose.onNodeWithText("Existing app content").assertIsDisplayed()
+        assertTrue(contentComposed)
+        assertTrue(app.remoteControl.canStartEngine())
+    }
+
+    @Test
     fun mandatoryUpdateHidesMainUi() {
-        app.source.policy = RemotePolicy(forceUpdate = true, latestVersionCode = 2)
+        setBackend(policy = RemotePolicy(forceUpdate = true, latestVersionCode = 2), subscription = null)
         showGate()
         compose.onNodeWithTag(RemoteControlTags.UPDATE).assertIsDisplayed()
         compose.onNodeWithTag(RemoteControlTags.OPEN_UPDATE).assertIsDisplayed()
@@ -75,7 +124,10 @@ class RemoteControlGateTest {
 
     @Test
     fun wrongPasswordCannotUnlockButCorrectPasswordAndNoticeAckCan() {
-        app.source.policy = RemotePolicy(appPassword = "open sesame", announcement = "A global notice")
+        setBackend(
+            policy = RemotePolicy(appPassword = "open sesame", announcement = "A global notice"),
+            subscription = null,
+        )
         showGate()
         compose.onNodeWithTag(RemoteControlTags.PASSWORD_INPUT).performTextInput("wrong")
         compose.onNodeWithTag(RemoteControlTags.PASSWORD_SUBMIT).performClick()

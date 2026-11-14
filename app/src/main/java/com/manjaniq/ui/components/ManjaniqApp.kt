@@ -28,6 +28,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.manjaniq.RemoteControlHost
+import com.manjaniq.remotecontrol.SubscriptionSnapshot
 import com.manjaniq.core.AetherSettingsStorage
 import com.manjaniq.core.AppLanguage
 import com.manjaniq.core.AppPreferences
@@ -39,7 +41,9 @@ import com.manjaniq.ui.screens.AboutScreen
 import com.manjaniq.ui.screens.GeneralSettingsScreen
 import com.manjaniq.ui.screens.HomeScreen
 import com.manjaniq.ui.screens.LogsScreenNew
+import com.manjaniq.ui.screens.SubscriptionSection
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -57,6 +61,15 @@ fun ManjaniqApp() {
 
     val ui by EngineRepository.uiState.collectAsState()
     val logs by EngineRepository.logs.collectAsState()
+
+    // Process-scoped remote-control session (created lazily by the application
+    // root). The settings section only reads its published snapshot; a null
+    // session means this build has no subscription source and shows nothing.
+    val remoteControl = remember(appContext) { (appContext as? RemoteControlHost)?.remoteControl }
+    val subscriptionSource = remember(remoteControl) {
+        remoteControl?.subscription ?: flowOf(SubscriptionSnapshot())
+    }
+    val subscription by subscriptionSource.collectAsState(initial = SubscriptionSnapshot())
 
     LaunchedEffect(Unit) {
         appPrefs.coreFlow.collect { selectedCore = it }
@@ -138,6 +151,16 @@ fun ManjaniqApp() {
                                     val problem = config.validate()
                                     if (problem != null) {
                                         localError = problem
+                                    } else if (remoteControl != null && !remoteControl.canStartEngine()) {
+                                        // An expired/over-quota subscription (or any other
+                                        // confirmed restriction) requests no start at all.
+                                        // Engines are stopped through the existing public
+                                        // APIs and a recheck publishes the restriction
+                                        // surface; the services enforce the same boundary.
+                                        AetherService.requestStop(appContext)
+                                        EngineRepository.requestStop(appContext)
+                                        remoteControl.refreshSubscription()
+                                        remoteControl.retry()
                                     } else {
                                         localError = null
                                         AetherService.requestStop(appContext)
@@ -176,6 +199,14 @@ fun ManjaniqApp() {
                                     activity?.recreate()
                                 },
                                 versionName = getVersionName(),
+                                subscriptionSection = {
+                                    if (remoteControl != null) {
+                                        SubscriptionSection(
+                                            snapshot = subscription,
+                                            onRefresh = { remoteControl.refreshSubscription() },
+                                        )
+                                    }
+                                },
                             )
                         }
 

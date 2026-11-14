@@ -67,6 +67,11 @@ class NavigationTest {
         openDrawerAndGo(AppDestination.Settings, TestTags.SETTINGS_SCREEN)
         compose.onNodeWithTag(TestTags.LANGUAGE_EN).assertExists()
         compose.onNodeWithTag(TestTags.LANGUAGE_FA).assertExists()
+        // The dedicated subscription section is present on the real screen. This
+        // instrumentation root has an offline subscription source, so the section
+        // must never render invented figures.
+        compose.onNodeWithTag(TestTags.SUBSCRIPTION_SECTION).assertExists()
+        compose.onNodeWithTag(TestTags.SUBSCRIPTION_REFRESH).assertExists()
 
         openDrawerAndGo(AppDestination.Logs, TestTags.LOGS_SCREEN)
         openDrawerAndGo(AppDestination.About, TestTags.ABOUT_SCREEN)

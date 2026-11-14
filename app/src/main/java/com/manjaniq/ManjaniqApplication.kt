@@ -8,6 +8,7 @@ import com.manjaniq.core.EngineRepository
 import com.manjaniq.core.models.EngineState
 import com.manjaniq.remotecontrol.DeviceRegistration
 import com.manjaniq.remotecontrol.ManjaniqRemoteControl
+import com.manjaniq.remotecontrol.ManjaniqSubscription
 import com.manjaniq.remotecontrol.RemoteControlSession
 import com.manjaniq.service.AetherService
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +54,10 @@ class ManjaniqApplication : Application(), RemoteControlHost {
             },
             onAccessBlocked = { stopActiveEngines(app) },
             registration = DeviceRegistration(app),
+            // Public client endpoint GET /api/subscription?device_id=… — the
+            // same identifier the policy check uses, over its own bounded
+            // HTTPS client with no shared cookies, cache or proxy settings.
+            subscriptionSource = ManjaniqSubscription(),
         )
     }
 

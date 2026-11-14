@@ -28,8 +28,11 @@ New implementation lives in `com.manjaniq.remotecontrol`:
 | `ManjaniqRemoteControl.kt` | Bounded HTTPS GET, response limits, cleanup, fail-open transport result |
 | `DeviceRegistration.kt` | One-time HTTPS POST, dedicated preferences guard, silent retry-on-failure |
 | `RemotePolicy.kt` | Strict JSON contract parsing, separate from engine config |
-| `RemoteControlSession.kt` | Startup deadline, gate precedence, password verification, process-local state |
-| `RemoteControlGate.kt` | Compose blocking/notice screens; no changes to existing screens |
+| `Subscription.kt` | `/api/subscription` contract, expiry parsing, quota evaluation, display snapshot |
+| `ManjaniqSubscription.kt` | Bounded HTTPS GET for the subscription endpoint, fail-open transport result |
+| `RemoteControlSession.kt` | Startup deadline, gate precedence, password verification, subscription enforcement + polling, process-local state |
+| `RemoteControlGate.kt` | Compose blocking/notice screens (incl. the “Isolated Node” restriction surface); no changes to existing screens |
+| `ui/screens/SubscriptionSection.kt` | Isolated subscription card in Settings (traffic, expiry, status, “Not configured”) |
 | `RemoteControlServiceGuard.kt` | Read-only service-start authorization boundary |
 
 ## Request and response
@@ -69,8 +72,9 @@ The installed code is read with `PackageManager.getPackageInfo` and
 
 Gate precedence:
 
-1. **Ban:** persistent, non-dismissible restriction screen; no main UI or engine
-   start access. “Check again” re-polls but cannot dismiss the restriction.
+1. **Ban:** persistent, non-dismissible restriction screen titled **“Isolated
+   Node”**; no main UI or engine start access. “Check again” re-polls but cannot
+   dismiss the restriction.
 2. **Mandatory update:** blocks only when `force_update` is true and installed
    code is strictly lower than `latest_version_code`. Equal/newer clients pass.
    The update button opens this repository's fixed GitHub Releases page, matching
@@ -80,9 +84,12 @@ Gate precedence:
    `MessageDigest.isEqual`. Wrong attempts stay blocked. A verified password is
    remembered only for the current process and invalidated if the policy password
    changes or a later check fails open.
-4. **Announcement:** shown after the password gate when nonblank; acknowledge to
+4. **Subscription:** between the update gate and the password prompt, a
+   *configured* subscription that is expired or out of traffic blocks the app and
+   both engines and reuses the same **“Isolated Node”** surface. See below.
+5. **Announcement:** shown after the password gate when nonblank; acknowledge to
    continue. It is not repeated on ordinary activity recreation.
-5. **Allowed:** compose the unchanged app and permit normal engine starts.
+6. **Allowed:** compose the unchanged app and permit normal engine starts.
 
 ## First-time device registration
 
@@ -134,6 +141,74 @@ Cache-Control: no-cache
   unregistered and local VPN use is unaffected. No URL, payload, identifier, or
   response body is logged.
 
+## Subscriptions
+
+The Worker exposes a public, device-scoped subscription endpoint:
+
+```http
+GET https://manjaniq-hub.manjaniqhub.workers.dev/api/subscription?device_id={encoded_ANDROID_ID}
+Accept: application/json
+Cache-Control: no-cache
+```
+
+```json
+{
+  "subscription_expire_date": "2026-06-01",
+  "traffic_limit_gb": 50,
+  "traffic_used_gb": 12.5,
+  "subscription_status": "Active"
+}
+```
+
+The fields may also be wrapped in `"subscription": { … }` or `"data": { … }`.
+They are read by `ManjaniqSubscription` over its own bounded HTTPS GET (no shared
+cookies, cache, proxy interceptor or connection pool), parsed by
+`SubscriptionParser`, and evaluated by `SubscriptionEvaluator`. The client never
+assumes a shape it was not given; every field is optional.
+
+### Startup, polling and the settings section
+
+- The subscription is fetched **beside** the policy check when the process starts,
+  so it can never delay or override the startup gate.
+- It is re-fetched every 5 minutes for the life of the process
+  (`RemoteControlSession.SUBSCRIPTION_POLL_INTERVAL_MS`), and immediately on
+  “Check again” and on the Refresh button in settings.
+- `RemoteControlSession.subscription` publishes a display-safe
+  `SubscriptionSnapshot`. The settings screen renders it in its own isolated
+  section (`SubscriptionSection`, hosted through `GeneralSettingsScreen`'s
+  `subscriptionSection` slot) with **Traffic**, **Expires** and **Status** rows.
+  When the server returns no subscription fields - never configured, endpoint
+  missing, HTTP error, invalid body - the section shows **“Not configured”** and
+  the app behaves exactly as an unconstrained client.
+
+### Enforcement
+
+Enforcement applies **only** to data the backend actually returned:
+
+| Condition | Result |
+| --- | --- |
+| `subscription_status` = `"Expired"` (case-insensitive) | block |
+| `subscription_expire_date` ≤ current device time | block |
+| `traffic_limit_gb` > 0 and `traffic_used_gb` ≥ `traffic_limit_gb` | block |
+| any field absent, null, or wrongly typed | that check cannot block |
+| endpoint unreachable / non-200 / invalid JSON / no subscription field | allow (not configured) |
+
+- Expiry accepts ISO-8601 dates and timestamps (with or without an offset) and
+  epoch seconds/milliseconds. A date without a time is valid through the end of
+  that UTC day. An unparseable date is treated as absent, never as expired.
+- A `traffic_limit_gb` of `0` (or absent) means unlimited, so a large
+  `traffic_used_gb` can never block by itself.
+- `canStartEngine()` - consulted by `EngineService`, `AetherService` and the
+  Home start button - re-evaluates the stored payload against the device clock
+  on every call. Expiry or quota that falls due while the app is open therefore
+  refuses the tunnel start immediately, and the restriction surface takes over.
+- A confirmed block requests Stop through the existing public engine APIs once,
+  on the transition into the restriction.
+- Nothing about a subscription is persisted. A new OS process starts with no
+  subscription state, and an unavailable backend fails open - the same guarantee
+  as the policy gate. Because the block is derived from data plus the clock, a
+  renewal lifts it on the next poll or recheck without restarting the app.
+
 ## Resilience and security properties
 
 - HTTPS only, with Android's default certificate and hostname verification.
@@ -174,6 +249,12 @@ containing the query-string device identifier.
 Host tests cover the JSON contract, HTTPS request settings/encoding, non-200 and
 exception fallback, body limits, startup timeout, gate precedence, password
 rotation, announcement acknowledgement, and real Compose gate rendering.
+`SubscriptionParserTest`, `ManjaniqSubscriptionTest`, `SubscriptionSessionTest`
+and `SubscriptionSectionTest` cover the subscription contract end to end:
+every envelope shape, absent/null/mistyped fields, every expiry format, the
+quota boundary, fail-open on transport failure and on a body without fields,
+the periodic poll, Stop being requested once per transition, the “Not
+configured” settings section and the **“Isolated Node”** restriction surface.
 `DeviceRegistrationTest` additionally covers the first-launch payload, the
 HTTP-200-only preferences flip, skip on later launches, retry after non-200 and
 transport failures, missing identity, HTTPS enforcement, blocked-socket timeout,
