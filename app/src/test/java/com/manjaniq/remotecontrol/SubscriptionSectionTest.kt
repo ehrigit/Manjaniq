@@ -4,9 +4,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
-import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -49,7 +48,7 @@ class SubscriptionSectionTest {
         // No status/traffic/expiry rows are invented for an absent payload.
         assertEquals(
             0,
-            compose.onAllNodes(hasTestTag(TestTags.SUBSCRIPTION_TRAFFIC_VALUE))
+            compose.onAllNodesWithTag(TestTags.SUBSCRIPTION_TRAFFIC_VALUE)
                 .fetchSemanticsNodes().size,
         )
         compose.onNodeWithTag(TestTags.SUBSCRIPTION_REFRESH).performClick()
@@ -79,7 +78,7 @@ class SubscriptionSectionTest {
         compose.onNodeWithTag(TestTags.SUBSCRIPTION_BADGE).assertIsDisplayed()
         assertEquals(
             0,
-            compose.onAllNodes(hasTestTag(TestTags.SUBSCRIPTION_NOT_CONFIGURED))
+            compose.onAllNodesWithTag(TestTags.SUBSCRIPTION_NOT_CONFIGURED)
                 .fetchSemanticsNodes().size,
         )
     }

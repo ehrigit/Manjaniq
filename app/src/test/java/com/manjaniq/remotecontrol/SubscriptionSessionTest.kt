@@ -62,7 +62,7 @@ class SubscriptionSessionTest {
 
     @Test
     fun anUnavailableEndpointKeepsAccessAndRepeatsNoRestriction() = runTest {
-        val source = FakeSubscriptionSource(failure = IOException("offline"))
+        val source = FakeSubscriptionSource(info = null, failure = IOException("offline"))
         val session = session(subscription = source)
         session.start()
         advanceUntilIdle()
