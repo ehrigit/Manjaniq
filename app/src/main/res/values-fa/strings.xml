@@ -96,6 +96,24 @@
     <string name="theme_dark">تیره</string>
     <string name="theme_dark_desc">حالت تیره حرفه‌ای (پیش‌فرض)</string>
     <string name="general">عمومی</string>
+
+    <!-- Subscription -->
+    <string name="subscription_section">اشتراک</string>
+    <string name="subscription_desc">وضعیت طرحی که سرور برای این دستگاه گزارش می‌کند</string>
+    <string name="subscription_status">وضعیت</string>
+    <string name="subscription_traffic">ترافیک</string>
+    <string name="subscription_traffic_value">%1$s از %2$s</string>
+    <string name="subscription_expires">انقضا</string>
+    <string name="subscription_not_configured">پیکربندی نشده</string>
+    <string name="subscription_unlimited">نامحدود</string>
+    <string name="subscription_status_unknown">نامشخص</string>
+    <string name="subscription_blocked_expired">این اشتراک منقضی شده است. تا زمانی که مدیر آن را تمدید نکند، دسترسی به برنامه و پراکسی ممکن نیست.</string>
+    <string name="subscription_blocked_traffic">ترافیک مجاز این اشتراک به پایان رسیده است. تا زمانی که مدیر آن را تمدید نکند، دسترسی به برنامه و پراکسی ممکن نیست.</string>
+    <string name="subscription_blocked_status">این اشتراک دیگر فعال نیست. تا زمانی که مدیر آن را تمدید نکند، دسترسی به برنامه و پراکسی ممکن نیست.</string>
+    <string name="subscription_badge_active">فعال</string>
+    <string name="subscription_badge_expired">منقضی</string>
+    <string name="subscription_badge_traffic">پایان ترافیک</string>
+    <string name="subscription_refresh">به‌روزرسانی</string>
     <string name="settings_saved_restart">تنظیمات ذخیره و موتور در حال راه‌اندازی مجدد.</string>
     <string name="settings_saved_next">تنظیمات ذخیره شد؛ در شروع دستی بعدی اعمال می‌شود.</string>
     <string name="defaults_restored">مقادیر پیش‌فرض بازیابی شد.</string>

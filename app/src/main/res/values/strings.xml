@@ -96,6 +96,24 @@
     <string name="theme_dark">Dark</string>
     <string name="theme_dark_desc">Premium dark mode (default)</string>
     <string name="general">General</string>
+
+    <!-- Subscription -->
+    <string name="subscription_section">Subscription</string>
+    <string name="subscription_desc">Plan status reported by the server for this device</string>
+    <string name="subscription_status">Status</string>
+    <string name="subscription_traffic">Traffic</string>
+    <string name="subscription_traffic_value">%1$s of %2$s</string>
+    <string name="subscription_expires">Expires</string>
+    <string name="subscription_not_configured">Not configured</string>
+    <string name="subscription_unlimited">Unlimited</string>
+    <string name="subscription_status_unknown">Unknown</string>
+    <string name="subscription_blocked_expired">This subscription has expired. App and proxy access are unavailable until the administrator renews it.</string>
+    <string name="subscription_blocked_traffic">The traffic allowance for this subscription has been used up. App and proxy access are unavailable until the administrator renews it.</string>
+    <string name="subscription_blocked_status">This subscription is no longer active. App and proxy access are unavailable until the administrator renews it.</string>
+    <string name="subscription_badge_active">Active</string>
+    <string name="subscription_badge_expired">Expired</string>
+    <string name="subscription_badge_traffic">Limit reached</string>
+    <string name="subscription_refresh">Refresh</string>
     <string name="settings_saved_restart">Settings saved; engine restarting.</string>
     <string name="settings_saved_next">Settings saved; they apply on the next manual start.</string>
     <string name="defaults_restored">Defaults restored and saved.</string>

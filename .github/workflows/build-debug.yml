@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -105,6 +105,18 @@ jobs:
           test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
           echo "Android NDK and ARM64 compiler are ready."
 
+      # The Android client does not need prebuilt JNI libraries to compile:
+      # NativeBridge/AetherBridge already degrade gracefully on the host. Catch
+      # Kotlin/resource/test-source errors before the long Rust/Go native builds.
+      - name: Compile Android client before native builds
+        run: bash scripts/ci/gradle_step.sh /tmp/gradle_compile.log :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin --stacktrace --no-daemon
+
+      - name: Run isolated remote-control unit tests
+        run: bash scripts/ci/gradle_step.sh /tmp/gradle_remote_test.log :app:testDebugUnitTest --tests 'com.manjaniq.remotecontrol.*' --stacktrace --no-daemon
+
+      - name: Release early Gradle memory before native builds
+        run: ./gradlew --stop || true
+
       - name: Test Go engine package
         run: |
           set -euo pipefail
@@ -130,13 +142,23 @@ jobs:
       - name: Install Rust toolchain (Aether)
         run: |
           set -euo pipefail
-          rustup update stable --no-self-update || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          # Pin the known-good native toolchain instead of tracking rolling
+          # stable. The verified baseline used 1.99.1; a new stable release must
+          # not silently change JNI export/strip behavior between CI runs.
+          rustup toolchain install 1.99.1 --profile minimal --no-self-update || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1
+          rustup default 1.99.1
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
           rustc --version
           cargo --version
-          rustup target add aarch64-linux-android x86_64-linux-android --toolchain stable || rustup target add aarch64-linux-android x86_64-linux-android
-          cargo install cargo-ndk --locked || cargo install cargo-ndk
+          rustup target add aarch64-linux-android x86_64-linux-android --toolchain 1.99.1
+          # bindgen uses rustfmt when present; the minimal profile omits it and
+          # the fallback formatter breaks boring-sys' ErrLib type-name search.
+          rustup component add rustfmt --toolchain 1.99.1
+          # The released cargo-ndk 4.1.2 omits the versioned --target from
+          # BINDGEN_EXTRA_CLANG_ARGS, which breaks boring-sys x86_64 bindgen.
+          # Pin the upstream fix (main@8cffdef) instead of tracking crates.io.
+          cargo install cargo-ndk --git https://github.com/bbqsrc/cargo-ndk --rev 8cffdefbc9fc29b15ef50390b73258032b26734b --locked
           cargo-ndk --version || cargo ndk --version
 
       - name: Build Native Libraries (arm64-v8a + x86_64) - RSTA (Go)
@@ -192,9 +214,31 @@ jobs:
           cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release --verbose 2>&1 | tee -a /tmp/aether_arm64.log; RC=${PIPESTATUS[0]}
           echo "arm64 build rc=$RC" | tee -a /tmp/aether_arm64.log
           ls -lh ../app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | tee -a /tmp/aether_arm64.log
-          # Build x86_64 (emulator) - best effort, don't fail primary if missing
+          # Build x86_64 (emulator). The APK/emulator gates require this ABI, so
+          # surface the actual compiler/linker failure instead of hiding it
+          # behind a warning that only becomes a missing-file error later.
           echo "=== cargo ndk x86_64 ===" | tee /tmp/aether_x64.log
-          cargo ndk -t x86_64 -o ../app/src/main/jniLibs build --release 2>&1 | tee -a /tmp/aether_x64.log || echo "::warning::x86_64 libaether build failed, continuing with arm64 only" | tee -a /tmp/aether_x64.log
+          free -h | tee -a /tmp/aether_x64.log
+          df -h . | tee -a /tmp/aether_x64.log
+          # cargo-ndk's exported NDK libclang produces empty x86_64 bindings
+          # with this NDK/boring-sys combination. Reuse its linker/target env
+          # but parse headers with the runner's LLVM 18 libclang instead.
+          cargo ndk-env -t x86_64 --include-internal > /tmp/aether_x64_env.sh 2>>/tmp/aether_x64.log
+          source /tmp/aether_x64_env.sh
+          export LIBCLANG_PATH=/usr/lib/llvm-18/lib
+          echo "LIBCLANG_PATH=$LIBCLANG_PATH" | tee -a /tmp/aether_x64.log
+          cargo build --release --target x86_64-linux-android --verbose 2>&1 | tee -a /tmp/aether_x64.log; X64_RC=${PIPESTATUS[0]}
+          mkdir -p ../app/src/main/jniLibs/x86_64
+          cp target/x86_64-linux-android/release/libaether.so ../app/src/main/jniLibs/x86_64/libaether.so 2>&1 | tee -a /tmp/aether_x64.log || true
+          echo "x86_64 build rc=$X64_RC" | tee -a /tmp/aether_x64.log
+          if [ "$X64_RC" -ne 0 ] || [ ! -f ../app/src/main/jniLibs/x86_64/libaether.so ]; then
+            find target/x86_64-linux-android/release/build -name bindings.rs -exec wc -l {} \; -exec head -n 20 {} \; 2>&1 | tee -a /tmp/aether_x64.log || true
+            X64_ERR=$(grep -E 'error\[|error: |FAILED|fatal|Killed|No space|memory|panicked|CMake Error' /tmp/aether_x64.log | grep -v 'failed to run custom build command' | tail -n 5 | sed 's/%/%25/g; s/\r/%0D/g' | paste -sd '\n' - | sed ':a;N;$!ba;s/\n/%0A/g' | cut -c1-2000)
+            X64_TAIL=$(tail -c 6000 /tmp/aether_x64.log | sed 's/%/%25/g; s/\r/%0D/g' | paste -sd '\n' - | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "::error title=Aether cargo x86_64::${X64_ERR:-x86_64 libaether.so was not produced}"
+            echo "::error title=Aether x86_64 log tail::$X64_TAIL"
+            exit 1
+          fi
           ls -lh ../app/src/main/jniLibs/x86_64/ 2>&1 | tee -a /tmp/aether_x64.log || true
           cd ..
           echo "--- tail arm64 log ---"
@@ -220,8 +264,10 @@ jobs:
             echo "### Aether arm64 build log (tail)" >> $GITHUB_STEP_SUMMARY 2>&1 || true
             tail -n 120 /tmp/aether_arm64.log >> $GITHUB_STEP_SUMMARY 2>&1 || true
           fi
-          # Fail if primary missing
+          # Fail if primary missing or cargo returned an error. A leftover file
+          # must never turn a failed compiler/linker invocation into a green build.
           test -f app/src/main/jniLibs/arm64-v8a/libaether.so || { echo "::error::libaether.so not produced - see /tmp/aether_arm64.log"; cat /tmp/aether_arm64.log 2>&1 | tail -n 500; exit 1; }
+          test "${RC:-1}" -eq 0 || { echo "::error::cargo ndk arm64 returned ${RC:-1} - see /tmp/aether_arm64.log"; exit 1; }
 
           # ---- Fix libc++_shared.so: required by libaether.so (BoringSSL/C++ via quiche) ----
           # The NDK provides it at sources/cxx-stl/llvm-libc++/libs/<abi>/libc++_shared.so
@@ -294,7 +340,13 @@ jobs:
           # Explicit ELF + symbol gate for libaether (fail if missing when wrapper exists)
           if [ -f app/src/main/jniLibs/arm64-v8a/libaether.so ]; then
             echo "Aether lib present, checking exports..."
-            nm -D app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Java_com_manjaniq_AetherBridge" || llvm-nm app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Java_com_manjaniq_AetherBridge" || { echo "::error::Missing JNI exports in libaether.so"; exit 1; }
+            nm -D app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Java_com_manjaniq_AetherBridge" || llvm-nm -D app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Java_com_manjaniq_AetherBridge" || {
+              echo "::error::Missing JNI exports in libaether.so"
+              { nm -D app/src/main/jniLibs/arm64-v8a/libaether.so; llvm-nm -D app/src/main/jniLibs/arm64-v8a/libaether.so; readelf --dyn-syms app/src/main/jniLibs/arm64-v8a/libaether.so; } > /tmp/aether_symbols.txt 2>&1 || true
+              SYMBOLS=$(head -n 80 /tmp/aether_symbols.txt | sed 's/%/%25/g; s/\r/%0D/g' | paste -sd '\n' - | sed ':a;N;$!ba;s/\n/%0A/g' | cut -c1-6000)
+              echo "::error title=Aether dynamic symbols::$SYMBOLS"
+              exit 1
+            }
             readelf -h app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "Machine:.*AArch64" || llvm-readelf -h app/src/main/jniLibs/arm64-v8a/libaether.so 2>&1 | grep -q "AArch64"
             echo "libaether.so ELF + exports OK"
           else
@@ -365,6 +417,7 @@ jobs:
           name: gradle-logs-and-unit-results
           path: |
             /tmp/gradle_compile.log
+            /tmp/gradle_remote_test.log
             /tmp/gradle_test.log
             /tmp/gradle_assemble.log
             app/build/test-results/**/TEST-*.xml
@@ -518,7 +571,7 @@ jobs:
           if-no-files-found: error
 
   emulator-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
     timeout-minutes: 90
     steps:
@@ -577,11 +630,14 @@ jobs:
       - name: Install Rust toolchain (Aether - emulator-smoke)
         run: |
           set -euo pipefail
-          rustup update stable --no-self-update || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          # Match the build job's pinned native toolchain exactly.
+          rustup toolchain install 1.99.1 --profile minimal --no-self-update || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1
+          rustup default 1.99.1
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
-          rustup target add aarch64-linux-android x86_64-linux-android --toolchain stable || rustup target add aarch64-linux-android x86_64-linux-android
-          cargo install cargo-ndk --locked || cargo install cargo-ndk
+          rustup target add aarch64-linux-android x86_64-linux-android --toolchain 1.99.1
+          rustup component add rustfmt --toolchain 1.99.1
+          cargo install cargo-ndk --git https://github.com/bbqsrc/cargo-ndk --rev 8cffdefbc9fc29b15ef50390b73258032b26734b --locked
           sudo apt-get update && sudo apt-get install -y cmake perl || true
 
       - name: Build native libs for the instrumentation build (arm64 + x86_64) - RSTA + Aether
@@ -600,7 +656,13 @@ jobs:
           cd aether-wrapper
           # Vendored path already patched; rebuild for emulator (no --locked, wrapper has no Cargo.lock)
           cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release || cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release --verbose
-          cargo ndk -t x86_64 -o ../app/src/main/jniLibs build --release || cargo ndk -t x86_64 -o ../app/src/main/jniLibs build --release --verbose || echo "::warning::Aether x86_64 build failed"
+          # Match the build job's x86_64 bindgen workaround exactly.
+          cargo ndk-env -t x86_64 --include-internal > /tmp/aether_x64_env.sh
+          source /tmp/aether_x64_env.sh
+          export LIBCLANG_PATH=/usr/lib/llvm-18/lib
+          cargo build --release --target x86_64-linux-android
+          mkdir -p ../app/src/main/jniLibs/x86_64
+          cp target/x86_64-linux-android/release/libaether.so ../app/src/main/jniLibs/x86_64/libaether.so
           cd ..
           # Copy libc++_shared.so for emulator build as well
           for ABI in arm64-v8a x86_64; do

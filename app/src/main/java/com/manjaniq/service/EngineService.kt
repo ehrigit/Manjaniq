@@ -14,6 +14,7 @@ import com.manjaniq.NativeBridge
 import com.manjaniq.R
 import com.manjaniq.core.ConfigStore
 import com.manjaniq.core.EngineRepository
+import com.manjaniq.remotecontrol.RemoteControlServiceGuard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,6 +41,16 @@ class EngineService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Remote-control boundary only: the native start/restart handlers below
+        // are unchanged, and ACTION_STOP is always allowed.
+        val starting = intent?.action == ACTION_START || intent?.action == ACTION_RESTART
+        if (starting && !RemoteControlServiceGuard.allowStart(this)) {
+            val message = getString(R.string.remote_control_service_blocked)
+            goForeground(message) // Satisfy the foreground-service start contract.
+            EngineRepository.onEngineActionFinished(message)
+            stopForegroundAndSelf()
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_START -> startEngine()
             ACTION_STOP -> stopEngine()

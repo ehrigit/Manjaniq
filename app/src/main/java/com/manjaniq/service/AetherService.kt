@@ -21,6 +21,7 @@ import com.manjaniq.core.AetherSettingsStorage
 import com.manjaniq.core.ConfigStore
 import com.manjaniq.core.EngineRepository
 import com.manjaniq.core.models.EngineState
+import com.manjaniq.remotecontrol.RemoteControlServiceGuard
 import com.manjaniq.ui.server.AetherLogEntry
 import com.manjaniq.ui.server.AetherLogText
 import com.manjaniq.ui.server.ServerAetherViewModel
@@ -60,6 +61,15 @@ class AetherService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Also covers null-action sticky restarts. No tunnel/core code changes;
+        // ACTION_STOP bypasses this authorization-only check.
+        val starting = intent?.action == ACTION_START || intent?.action == null
+        if (starting && !RemoteControlServiceGuard.allowStart(this)) {
+            promoteForeground(getString(R.string.remote_control_service_blocked))
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_STOP -> {
                 stopTunnel()

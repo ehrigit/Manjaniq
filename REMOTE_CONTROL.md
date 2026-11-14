@@ -1,0 +1,285 @@
+# Manjaniq remote control
+
+This is an isolated startup-policy and one-time device-registration component
+for the Android client. It does not modify RSTA/Aether protocols, native
+libraries, proxy/tunnel arguments, profiles, engine configuration storage, or
+the existing navigation/screens.
+
+## Integration boundary
+
+- `ManjaniqApplication` is the process-scoped composition root. It creates the
+  remote-control session lazily; application creation itself performs no network
+  work and does not initialize an engine.
+- `MainActivity` wraps the unchanged `ManjaniqApp()` in `RemoteControlGate`.
+  The existing app is not composed until the gate allows access. Rotation and
+  language-triggered activity recreation reuse the same in-memory session.
+- `EngineService.onStartCommand` and `AetherService.onStartCommand` consult a
+  nonblocking, authorization-only guard before their existing start handlers.
+  Stop actions are always allowed. Aether's null-action sticky restart is covered
+  too; a rejected sticky restart is not automatically retried.
+- On a confirmed ban, mandatory update, or unverified password requirement, the
+  composition root requests Stop through the existing public engine APIs for
+  engines believed to be active. It never calls native start/stop directly.
+
+New implementation lives in `com.manjaniq.remotecontrol`:
+
+| File | Responsibility |
+| --- | --- |
+| `ManjaniqRemoteControl.kt` | Bounded HTTPS GET, response limits, cleanup, fail-open transport result |
+| `DeviceRegistration.kt` | One-time HTTPS POST, dedicated preferences guard, silent retry-on-failure |
+| `RemotePolicy.kt` | Strict JSON contract parsing, separate from engine config |
+| `Subscription.kt` | `/api/subscription` contract, expiry parsing, quota evaluation, display snapshot |
+| `ManjaniqSubscription.kt` | Bounded HTTPS GET for the subscription endpoint, fail-open transport result |
+| `RemoteControlSession.kt` | Startup deadline, gate precedence, password verification, subscription enforcement + polling, process-local state |
+| `RemoteControlGate.kt` | Compose blocking/notice screens (incl. the “Isolated Node” restriction surface); no changes to existing screens |
+| `ui/screens/SubscriptionSection.kt` | Isolated subscription card in Settings (traffic, expiry, status, “Not configured”) |
+| `RemoteControlServiceGuard.kt` | Read-only service-start authorization boundary |
+
+## Request and response
+
+```http
+GET https://manjaniq-hub.manjaniqhub.workers.dev/api/check?device_id={encoded_ANDROID_ID}
+Accept: application/json
+Cache-Control: no-cache
+```
+
+The identifier is read with:
+
+```kotlin
+Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+```
+
+It is URL-encoded and needs no additional permission. `ANDROID_ID` is scoped to
+the app signing key/user/device and can change after uninstall/reinstall or a
+factory reset; it is not a permanent hardware identifier.
+
+```json
+{
+  "is_banned": false,
+  "force_update": false,
+  "latest_version_code": 2,
+  "app_password": "",
+  "announcement": ""
+}
+```
+
+Missing/null optional fields mean no restriction. Booleans must be JSON booleans;
+password/announcement must be strings. Version codes must be nonnegative integers
+(JSON integers or digit-only strings are accepted). A forced update without a
+valid latest version is treated as an invalid policy, not a guessed restriction.
+The installed code is read with `PackageManager.getPackageInfo` and
+`PackageInfoCompat.getLongVersionCode`.
+
+Gate precedence:
+
+1. **Ban:** persistent, non-dismissible restriction screen titled **“Isolated
+   Node”**; no main UI or engine start access. “Check again” re-polls but cannot
+   dismiss the restriction.
+2. **Mandatory update:** blocks only when `force_update` is true and installed
+   code is strictly lower than `latest_version_code`. Equal/newer clients pass.
+   The update button opens this repository's fixed GitHub Releases page, matching
+   the project's APK distribution; the remote JSON cannot supply an arbitrary URL.
+3. **Password:** required when `app_password` is nonempty. Comparison is exact
+   (including whitespace), over UTF-8 bytes, using SHA-256 digests and
+   `MessageDigest.isEqual`. Wrong attempts stay blocked. A verified password is
+   remembered only for the current process and invalidated if the policy password
+   changes or a later check fails open.
+4. **Subscription:** between the update gate and the password prompt, a
+   *configured* subscription that is expired or out of traffic blocks the app and
+   both engines and reuses the same **“Isolated Node”** surface. See below.
+5. **Announcement:** shown after the password gate when nonblank; acknowledge to
+   continue. It is not repeated on ordinary activity recreation.
+6. **Allowed:** compose the unchanged app and permit normal engine starts.
+
+## First-time device registration
+
+Registration is a fire-and-forget side task launched beside the policy check.
+It never delays the gate, changes gate precedence, grants access, or stops an
+engine. The composition root supplies `DeviceRegistration`; host and
+instrumentation test roots supply offline seams instead.
+
+```http
+POST https://manjaniq-hub.manjaniqhub.workers.dev/api/register
+Accept: application/json
+Content-Type: application/json; charset=utf-8
+Cache-Control: no-cache
+```
+
+```json
+{
+  "device_id": "{ANDROID_ID}",
+  "manufacturer": "{Build.MANUFACTURER}",
+  "model": "{Build.MODEL}",
+  "android_version": "{Build.VERSION.RELEASE}",
+  "app_version": {
+    "version_name": "{installed versionName}",
+    "version_code": 1
+  }
+}
+```
+
+- The specs need **no runtime permission** and no new manifest permission:
+  `Build` fields, the existing `ANDROID_ID`, `PackageManager`, and the existing
+  `INTERNET` permission. No IMEI, serial, advertising ID, account, or location
+  is collected. Text fields are bounded and JSON-encoded.
+- The guard is boolean `is_device_registered`, default `false`, in the dedicated
+  preferences file `com.manjaniq.remotecontrol.device_registration`. It is not
+  mixed into engine/profile configuration storage.
+- On launcher startup, a false flag schedules one attempt on `Dispatchers.IO`.
+  The flag is committed **only after HTTP 200**. A later launch in the same or
+  a new OS process then skips the request. Clearing app data or reinstalling
+  starts a new installation; an app update alone does not resend the payload.
+- Connect/read timeouts are 3 seconds and the whole registration wait is
+  7 seconds; the deadline watcher disconnects the socket. Non-200 responses
+  (including an unimplemented endpoint), DNS/socket/TLS errors, timeouts,
+  missing local identity/version, and oversized payloads fail **silently** and
+  leave the flag false. The next OS process retries once. Failed attempts may
+  therefore be sent more than once; successful registration is persisted once
+  per installation.
+- The client does not assume `/api/register` is already deployed. Until the
+  Worker implements it and returns HTTP 200, registration simply remains
+  unregistered and local VPN use is unaffected. No URL, payload, identifier, or
+  response body is logged.
+
+## Subscriptions
+
+The Worker exposes a public, device-scoped subscription endpoint:
+
+```http
+GET https://manjaniq-hub.manjaniqhub.workers.dev/api/subscription?device_id={encoded_ANDROID_ID}
+Accept: application/json
+Cache-Control: no-cache
+```
+
+```json
+{
+  "subscription_expire_date": "2026-06-01",
+  "traffic_limit_gb": 50,
+  "traffic_used_gb": 12.5,
+  "subscription_status": "Active"
+}
+```
+
+The fields may also be wrapped in `"subscription": { … }` or `"data": { … }`.
+They are read by `ManjaniqSubscription` over its own bounded HTTPS GET (no shared
+cookies, cache, proxy interceptor or connection pool), parsed by
+`SubscriptionParser`, and evaluated by `SubscriptionEvaluator`. The client never
+assumes a shape it was not given; every field is optional.
+
+### Startup, polling and the settings section
+
+- The subscription is fetched **beside** the policy check when the process starts,
+  so it can never delay or override the startup gate.
+- It is re-fetched every 5 minutes for the life of the process
+  (`RemoteControlSession.SUBSCRIPTION_POLL_INTERVAL_MS`), and immediately on
+  “Check again” and on the Refresh button in settings.
+- `RemoteControlSession.subscription` publishes a display-safe
+  `SubscriptionSnapshot`. The settings screen renders it in its own isolated
+  section (`SubscriptionSection`, hosted through `GeneralSettingsScreen`'s
+  `subscriptionSection` slot) with **Traffic**, **Expires** and **Status** rows.
+  When the server returns no subscription fields - never configured, endpoint
+  missing, HTTP error, invalid body - the section shows **“Not configured”** and
+  the app behaves exactly as an unconstrained client.
+
+### Enforcement
+
+Enforcement applies **only** to data the backend actually returned:
+
+| Condition | Result |
+| --- | --- |
+| `subscription_status` = `"Expired"` (case-insensitive) | block |
+| `subscription_expire_date` ≤ current device time | block |
+| `traffic_limit_gb` > 0 and `traffic_used_gb` ≥ `traffic_limit_gb` | block |
+| any field absent, null, or wrongly typed | that check cannot block |
+| endpoint unreachable / non-200 / invalid JSON / no subscription field | allow (not configured) |
+
+- Expiry accepts ISO-8601 dates and timestamps (with or without an offset) and
+  epoch seconds/milliseconds. A date without a time is valid through the end of
+  that UTC day. An unparseable date is treated as absent, never as expired.
+- A `traffic_limit_gb` of `0` (or absent) means unlimited, so a large
+  `traffic_used_gb` can never block by itself.
+- `canStartEngine()` - consulted by `EngineService`, `AetherService` and the
+  Home start button - re-evaluates the stored payload against the device clock
+  on every call. Expiry or quota that falls due while the app is open therefore
+  refuses the tunnel start immediately, and the restriction surface takes over.
+- A confirmed block requests Stop through the existing public engine APIs once,
+  on the transition into the restriction.
+- Nothing about a subscription is persisted. A new OS process starts with no
+  subscription state, and an unavailable backend fails open - the same guarantee
+  as the policy gate. Because the block is derived from data plus the clock, a
+  renewal lifts it on the next poll or recheck without restarting the app.
+
+## Resilience and security properties
+
+- HTTPS only, with Android's default certificate and hostname verification.
+- No redirects, HTTP downgrade, shared proxy interceptor, cookie store, or cache.
+- Connect timeout: 3 seconds; read timeout: 3 seconds; whole startup wait:
+  7 seconds. The deadline watcher disconnects the active socket. A platform DNS
+  call that ignores interruption may finish in the background, but cannot hold
+  the UI past the deadline.
+- Only HTTP 200 is parsed. Other statuses, timeouts, DNS/socket/TLS errors,
+  invalid JSON/field types, missing local identity/version, and oversized bodies
+  (more than 64 KiB) **fail open**.
+- No restriction or password is persisted. The only persisted remote-control
+  state is the one-time registration success flag. A fresh OS process starts
+  with a new policy check; an unavailable backend cannot resurrect an old
+  cached ban.
+- No device ID, password, response body, or query URL is logged. The password is
+  not placed in Compose saved state, Intents, preferences, or engine logs.
+- A backend outage does not stop an already running local engine. Confirmed
+  restrictions do request Stop and reject new starts until the gate permits access.
+- The check runs once per OS process, not on every Activity resume. Blocking
+  screens offer an explicit recheck; background policy push/periodic enforcement
+  is outside this startup integration.
+
+### Important limitation
+
+The requested `app_password` is a client-side shared gate, not strong
+authentication. The server sends it to the client, and the mandated offline
+fallback intentionally allows access without a verified policy. A modified client
+or an offline launch can bypass client-side gates. Do not treat this as protection
+for privileged server operations or confidential data. Those require server-side
+authentication/authorization and a separately designed offline policy. Constant-
+time comparison avoids a local string-comparison timing shortcut; it does not
+change this trust boundary. The Worker should also minimize retention/access logs
+containing the query-string device identifier.
+
+## Verification
+
+Host tests cover the JSON contract, HTTPS request settings/encoding, non-200 and
+exception fallback, body limits, startup timeout, gate precedence, password
+rotation, announcement acknowledgement, and real Compose gate rendering.
+`SubscriptionParserTest`, `ManjaniqSubscriptionTest`, `SubscriptionSessionTest`
+and `SubscriptionSectionTest` cover the subscription contract end to end:
+every envelope shape, absent/null/mistyped fields, every expiry format, the
+quota boundary, fail-open on transport failure and on a body without fields,
+the periodic poll, Stop being requested once per transition, the “Not
+configured” settings section and the **“Isolated Node”** restriction surface.
+`DeviceRegistrationTest` additionally covers the first-launch payload, the
+HTTP-200-only preferences flip, skip on later launches, retry after non-200 and
+transport failures, missing identity, HTTPS enforcement, blocked-socket timeout,
+and zero-permission spec collection. Session tests prove registration cannot
+delay or override the policy gate.
+
+Instrumentation uses `ManjaniqTestRunner` to supply a test-only application through
+the same `RemoteControlHost` composition interface. There is no production
+test-mode flag, bypass URL, or alternate UI. Existing launcher/navigation/locale
+and native-engine tests still exercise the real Activity/services/engines without
+depending on a live operator's policy. A real service-start rejection test covers
+the RSTA boundary.
+
+The emulator's phase-1 manual artifact launch disables its network radios before
+launch and restores them afterward, explicitly verifying production fail-open
+behavior. Phase 2 uses the deterministic instrumentation composition root.
+
+Run the existing pipeline unchanged:
+
+```sh
+./gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin
+./gradlew :app:testDebugUnitTest
+./gradlew assembleDebug
+./gradlew connectedDebugAndroidTest
+```
+
+The native libraries are built by the existing GitHub Actions workflow before
+APK/emulator verification. No new production networking dependency is required.

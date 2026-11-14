@@ -13,13 +13,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.WindowCompat
 import com.manjaniq.core.AppPreferences
 import com.manjaniq.core.LocaleHelper
+import com.manjaniq.remotecontrol.RemoteControlGate
 import com.manjaniq.ui.components.ManjaniqApp
 import com.manjaniq.ui.theme.ManjaniqTheme
 
 /**
- * Single launcher activity. It always composes the real application UI;
- * there is deliberately no test-mode branch, so instrumentation tests
- * exercise exactly what users see.
+ * Single launcher activity. After the isolated remote startup gate allows
+ * access it composes the unchanged application UI. There is no test-mode UI
+ * branch; instrumentation supplies its policy at the application boundary.
  */
 class MainActivity : ComponentActivity() {
 
@@ -58,7 +59,9 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ManjaniqTheme {
-                ManjaniqApp()
+                RemoteControlGate {
+                    ManjaniqApp()
+                }
             }
         }
     }

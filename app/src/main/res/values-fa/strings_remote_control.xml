@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_control_checking">در حال بررسی دسترسی برنامه…</string>
+    <string name="remote_control_restricted_title">Isolated Node</string>
+    <string name="remote_control_update_title">به‌روزرسانی لازم است</string>
+    <string name="remote_control_update_message">برای ادامه، نگارش منجانیق با کد نسخهٔ %1$s یا جدیدتر را نصب کنید. این نگارش دیگر به برنامه و موتورهای پراکسی دسترسی ندارد.</string>
+    <string name="remote_control_open_update">باز کردن آخرین انتشار</string>
+    <string name="remote_control_update_unavailable">مرورگری در دسترس نیست. نشانی github.com/ehsanbagherigit/Manjaniq/releases را در دستگاه دیگری باز کنید و جدیدترین APK را نصب کنید.</string>
+    <string name="remote_control_retry">بررسی دوباره</string>
+    <string name="remote_control_password_title">گذرواژهٔ برنامه</string>
+    <string name="remote_control_password_message">برای ادامه، گذرواژه‌ای را که مدیر برنامه در اختیار شما گذاشته است وارد کنید.</string>
+    <string name="remote_control_password_label">گذرواژه</string>
+    <string name="remote_control_password_incorrect">گذرواژه نادرست است. دوباره تلاش کنید.</string>
+    <string name="remote_control_unlock">باز کردن برنامه</string>
+    <string name="remote_control_announcement_title">اطلاعیه</string>
+    <string name="remote_control_continue">ادامه</string>
+    <string name="remote_control_service_blocked">دسترسی به برنامه هنوز ممکن نیست. منجانیق را باز کنید و بررسی هنگام راه‌اندازی را کامل کنید.</string>
+</resources>

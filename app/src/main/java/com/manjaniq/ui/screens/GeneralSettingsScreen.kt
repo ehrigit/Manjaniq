@@ -22,7 +22,14 @@ fun GeneralSettingsScreen(
     currentLanguage: AppLanguage,
     onLanguageChange: (AppLanguage) -> Unit,
     versionName: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * Dedicated subscription block. It is hosted in its own slot rather than
+     * being folded into a preference card so the section can change, or be
+     * omitted by a composition root with no subscription source, without
+     * touching language, appearance or general settings.
+     */
+    subscriptionSection: @Composable () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -77,6 +84,12 @@ fun GeneralSettingsScreen(
                 )
             }
         }
+
+        // Subscription — its own isolated section. It comes after the language
+        // preference so existing controls keep their position in this
+        // scrollable column, and it renders nothing when the composition root
+        // has no subscription source.
+        subscriptionSection()
 
         // Appearance — dark theme info (no toggle needed, but show current)
         SettingsCard(title = stringResource(R.string.appearance).uppercase()) {

@@ -26,6 +26,12 @@ path = "src/lib.rs"
 # the parts of arti, sqlite and liblzma stop being packaged: a third of the
 # shared library's bytes that nothing on this platform could reach.
 aether = { path = "../third_party/Aether/aether" }
+# Match the vendored Aether Cargo.lock. The wrapper is its own workspace root,
+# so the path dependency's lock is not honored here; floating "5.3" recently
+# resolved boring-sys 5.5.0, whose Android x86_64 bindgen output fails with
+# `unresolved import _bindgen_ty_1`. Pin the known-good BoringSSL bindings.
+boring = "=5.3.0"
+boring-sys = "=5.3.0"
 jni = "0.21.1"
 serde_json = "1"
 # The bridge installs its own `log` sink (logcat + an in-memory ring the app
