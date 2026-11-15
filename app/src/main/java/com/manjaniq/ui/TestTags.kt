@@ -20,6 +20,7 @@ object TestTags {
     const val CORE_CARD_RSTA = "core_card_rsta"
     const val CORE_CARD_AETHER = "core_card_aether"
     const val ENGINE_TOGGLE = "engine_toggle_button"
+    const val QUICK_CONNECT_BUTTON = "quick_connect_button"
     const val AETHER_DISABLED_BUTTON = "aether_disabled_button"
     const val AETHER_TOGGLE = "aether_toggle_button"
     const val AETHER_SETTINGS = "aether_settings_form"

@@ -214,6 +214,11 @@ required = [
     ('com.manjaniq.AetherNativeTest', 'theEngineGetsWritableDirectories'),
     ('com.manjaniq.AetherNativeTest', 'theIdentityPathIsPreparedInsideFilesDir'),
     ('com.manjaniq.AetherNativeTest', 'aStartIsReportedByTheJobApiAndTheLogSink'),
+    # End-to-end proof that the userspace TUN stack relays real bytes both
+    # ways on-device (SYN -> SOCKS5 CONNECT -> echo -> FIN). This is the
+    # regression test for the "VPN reports CONNECTED but no app has internet"
+    # bug: it fails unless local SOCKS + TCP relay actually move bytes.
+    ('com.manjaniq.quickconnect.QuickConnectTunnelTest', 'tunnelRelaysBidirectionalTrafficOnDevice'),
 ]
 seen = {}
 total = failed = 0
