@@ -149,7 +149,14 @@ class ManjaniqVpnService : VpnService() {
                         break
                     }
                     if (n < 0) break
-                    if (n > 0) stack?.handlePacket(buffer, n)
+                    if (n > 0) {
+                        try {
+                            stack?.handlePacket(buffer, n)
+                        } catch (t: Throwable) {
+                            // Never let one bad packet kill the tunnel: log and keep pumping.
+                            Log.e(TAG, "packet dropped; tunnel kept alive", t)
+                        }
+                    }
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "TUN pump died", t)

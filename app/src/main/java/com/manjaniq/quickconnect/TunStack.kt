@@ -44,11 +44,15 @@ internal class TunStack(
     private var running = true
 
     private val conns = ConcurrentHashMap<ConnKey, TcpConnection>()
-    private val dialExecutor = Executors.newCachedThreadPool { r ->
-        thread(name = "manjaniq-tun-dial", isDaemon = true) { r.run() }
+    // NOTE: thread factories must return UNSTARTED threads. Using
+    // kotlin.concurrent.thread { } here (which starts immediately) made the
+    // pool call start() on an already-running thread -> IllegalThreadStateException
+    // on the very first dial, killing the TUN pump and every connection with it.
+    private val dialExecutor = Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "manjaniq-tun-dial").apply { isDaemon = true }
     }
-    private val dnsExecutor = Executors.newCachedThreadPool { r ->
-        thread(name = "manjaniq-tun-dns", isDaemon = true) { r.run() }
+    private val dnsExecutor = Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "manjaniq-tun-dns").apply { isDaemon = true }
     }
 
     @Volatile
