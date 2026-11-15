@@ -422,6 +422,7 @@
     <string name="quick_connect_connected_fmt">متصل · %1$s — %2$s</string>
     <string name="quick_connect_timeout">هستهٔ انتخابی به‌موقع آماده نشد</string>
     <string name="quick_connect_error">اتصال سریع ناموفق بود</string>
+    <string name="quick_connect_remote_blocked">شروع توسط سیاست کنترل از راه دور مسدود شده است؛ هسته راه‌اندازی نشد</string>
     <string name="quick_connect_session_lost">ارتباط قطع شد؛ هسته یا VPN متوقف شد</string>
     <string name="quick_connect_cd">دکمهٔ اتصال سریع</string>
     <string name="quick_connect_rsta_note">RSTA فقط به یک مقصد مشخص وصل می‌شود؛ VPN کامل دستگاه به Aether نیاز دارد</string>

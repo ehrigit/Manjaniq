@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.manjaniq.R
 import com.manjaniq.RemoteControlHost
-import com.manjaniq.core.AetherService
+import com.manjaniq.service.AetherService
 import com.manjaniq.core.AppPreferences
 import com.manjaniq.core.ConfigStore
 import com.manjaniq.core.EngineRepository
@@ -162,7 +162,7 @@ object QuickConnectController {
                     EngineRepository.requestStop(app)
                     remoteControl.refreshSubscription()
                     remoteControl.retry()
-                    fail(app.getString(R.string.remote_control_service_blocked))
+                    fail(app.getString(R.string.quick_connect_remote_blocked))
                     null
                 } else {
                     val coreWasRunning = coreIsRunning(selected)

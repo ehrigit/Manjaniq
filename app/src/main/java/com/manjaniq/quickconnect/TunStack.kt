@@ -301,17 +301,27 @@ internal class TunStack(
 
     // --------------------------------------------------------- connection
 
+    private enum class TcpState { SYN_RECEIVED, ESTABLISHED, CLOSED }
+
+    private class SentSegment(
+        val seq: Int,
+        val payload: ByteArray,
+        val isFin: Boolean,
+        var sentAt: Long,
+        var retransmits: Int = 0,
+    ) {
+        val end: Int get() = seq + payload.size + if (isFin) 1 else 0
+    }
+
     private inner class TcpConnection(
         private val key: ConnKey,
         private val isn: Int,
         private var rcvNxt: Int,
     ) {
-        enum class State { SYN_RECEIVED, ESTABLISHED, CLOSED }
-
         private val lock = Any()
 
         @Volatile
-        var state = State.SYN_RECEIVED
+        var state = TcpState.SYN_RECEIVED
             private set
 
         @Volatile
@@ -322,16 +332,6 @@ internal class TunStack(
         private var sndUna = isn + 1
         private var sndNxt = isn + 1
         private var peerWindow = INITIAL_PEER_WINDOW
-
-        private class SentSegment(
-            val seq: Int,
-            val payload: ByteArray,
-            val isFin: Boolean,
-            var sentAt: Long,
-            var retransmits: Int = 0,
-        ) {
-            val end: Int get() = seq + payload.size + if (isFin) 1 else 0
-        }
 
         private val unacked = ArrayDeque<SentSegment>()
 
@@ -395,7 +395,7 @@ internal class TunStack(
                     }
                     // Any ACK carries a usable window hint; last one wins.
                     peerWindow = seg.window
-                    if (state == State.SYN_RECEIVED) state = State.ESTABLISHED
+                    if (state == TcpState.SYN_RECEIVED) state = TcpState.ESTABLISHED
                 }
 
                 // In-order payload from the app; deliver toward SOCKS.
@@ -451,7 +451,7 @@ internal class TunStack(
                 if (closed) return
                 closed = true
                 conns.remove(key)
-                state = State.CLOSED
+                state = TcpState.CLOSED
                 sendRstLocked()
                 closeUpstreamLocked()
             }
@@ -545,7 +545,7 @@ internal class TunStack(
                     return
                 }
                 // Handshake never completed: retransmit SYN-ACK, then give up.
-                if (state == State.SYN_RECEIVED) {
+                if (state == TcpState.SYN_RECEIVED) {
                     if (now - synAckSentAt > SYN_ACK_TIMEOUT_MS) {
                         abortLocked()
                         return
@@ -719,7 +719,7 @@ internal class TunStack(
         private fun abortLocked() {
             if (closed) return
             closed = true
-            state = State.CLOSED
+            state = TcpState.CLOSED
             conns.remove(key)
             closeUpstreamLocked()
         }
@@ -728,7 +728,7 @@ internal class TunStack(
         fun abort() {
             synchronized(lock) {
                 closed = true
-                state = State.CLOSED
+                state = TcpState.CLOSED
                 conns.remove(key)
                 closeUpstreamLocked()
             }
@@ -737,7 +737,7 @@ internal class TunStack(
         private fun closeLocked() {
             if (closed) return
             closed = true
-            state = State.CLOSED
+            state = TcpState.CLOSED
             conns.remove(key)
             closeUpstreamLocked()
         }

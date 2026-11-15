@@ -1,10 +1,10 @@
 package com.manjaniq.service
 
 import android.app.Notification
+import android.net.VpnService
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -33,7 +33,7 @@ import kotlin.concurrent.thread
  * this process: TCP is relayed with SOCKS5 CONNECT through the proxy, DNS is
  * relayed as DNS-over-TCP, other UDP is dropped (see TunStack docs).
  */
-class ManjaniqVpnService : Service() {
+class ManjaniqVpnService : VpnService() {
 
     enum class VpnState { STOPPED, STARTING, CONNECTED, STOPPING, ERROR }
 
@@ -67,6 +67,7 @@ class ManjaniqVpnService : Service() {
 
     override fun onDestroy() {
         teardownTunnel()
+        _state.value = VpnState.STOPPED
         super.onDestroy()
     }
 
@@ -85,7 +86,7 @@ class ManjaniqVpnService : Service() {
         teardownTunnel() // idempotent: never stack two tunnels
 
         val established: ParcelFileDescriptor? = try {
-            Builder()
+            VpnService.Builder()
                 .setSession(getString(R.string.vpn_session_name))
                 .setMtu(TUN_MTU)
                 .addAddress(TUN_ADDRESS, TUN_PREFIX)
@@ -298,8 +299,15 @@ class ManjaniqVpnService : Service() {
             val intent = Intent(app, ManjaniqVpnService::class.java).apply {
                 action = ACTION_STOP
             }
-            // The service is already foregrounded when stopping.
-            app.startService(intent)
+            // The service is already foregrounded when stopping. If the app
+            // is in the background (Android O+ start restrictions), a running
+            // service can always be stopped directly; onDestroy tears down.
+            try {
+                app.startService(intent)
+            } catch (t: Throwable) {
+                Log.w(TAG, "startService(ACTION_STOP) refused; stopping service directly", t)
+                app.stopService(Intent(app, ManjaniqVpnService::class.java))
+            }
         }
     }
 }
