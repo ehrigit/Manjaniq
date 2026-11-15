@@ -53,6 +53,20 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="User-controlled tunnel (Aether SOCKS5) that must keep running while other apps use the proxy" />
         </service>
+
+        <!-- Quick Connect VPN tunnel (TUN -> local SOCKS5 proxy).
+             Established only by the Quick Connect button after the user grants
+             VPN consent via VpnService.prepare(); manual core startups never
+             reach this service and never alter system traffic. -->
+        <service
+            android:name=".service.ManjaniqVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-consented VPN tunnel (TUN interface to the app's local SOCKS5 proxy) started only by the Quick Connect action" />
+        </service>
     </application>
 
 </manifest>

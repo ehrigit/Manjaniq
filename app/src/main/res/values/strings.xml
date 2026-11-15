@@ -413,4 +413,22 @@
         <item>Public Relays Only</item>
         <item>BridgeDB Only</item>
     </string-array>
+
+    <!-- Quick Connect (VPN tunnel control) -->
+    <string name="quick_connect_title">Quick Connect</string>
+    <string name="quick_connect_hint_idle">Tap to connect</string>
+    <string name="quick_connect_connecting">Connecting…</string>
+    <string name="quick_connect_stopping">Disconnecting…</string>
+    <string name="quick_connect_connected_fmt">Connected · %1$s — %2$s</string>
+    <string name="quick_connect_timeout">The selected core did not become ready in time</string>
+    <string name="quick_connect_error">Quick Connect failed</string>
+    <string name="quick_connect_session_lost">Connection lost; the core or the VPN stopped</string>
+    <string name="quick_connect_cd">Quick Connect button</string>
+    <string name="quick_connect_rsta_note">RSTA forwards to a single destination only — full-device VPN requires Aether</string>
+    <string name="vpn_session_name">Manjaniq Quick Connect</string>
+    <string name="vpn_notification_title">Manjaniq — Quick Connect VPN</string>
+    <string name="vpn_notification_channel_name">Quick Connect VPN</string>
+    <string name="vpn_notification_channel_desc">Shown while Manjaniq routes device traffic through a local proxy</string>
+    <string name="vpn_notification_connecting">Bringing the tunnel up…</string>
+    <string name="vpn_notification_running">Routing device traffic via %1$s</string>
 </resources>

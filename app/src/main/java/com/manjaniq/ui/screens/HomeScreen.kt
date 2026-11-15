@@ -35,9 +35,11 @@ import com.manjaniq.core.EngineUiState
 import com.manjaniq.core.SelectedCore
 import com.manjaniq.core.models.EngineState
 import com.manjaniq.core.models.RSTAConfig
+import com.manjaniq.quickconnect.QuickConnectUiState
 import com.manjaniq.ui.TestTags
 import com.manjaniq.ui.components.CompactConnectionStatus
 import com.manjaniq.ui.components.CoreSelector
+import com.manjaniq.ui.components.QuickConnectButton
 import com.manjaniq.ui.components.RstaLiveStatsCard
 import com.manjaniq.ui.components.RstaRecentLogsCard
 import com.manjaniq.ui.server.AetherHomePanel
@@ -59,6 +61,8 @@ fun HomeScreen(
     onSaveConfig: (RSTAConfig, Boolean) -> Unit,
     onResetDefaults: () -> RSTAConfig,
     modifier: Modifier = Modifier,
+    quickConnectState: QuickConnectUiState = QuickConnectUiState(),
+    onQuickConnect: () -> Unit = {},
 ) {
     val running = ui.state == EngineState.RUNNING
     val transition = ui.state == EngineState.STARTING || ui.state == EngineState.STOPPING
@@ -71,6 +75,14 @@ fun HomeScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // Directly below the top bar (logo + title): the one-tap VPN tunnel.
+        // Additive — existing sections below are unchanged.
+        QuickConnectButton(
+            state = quickConnectState,
+            selectedCore = selectedCore,
+            onClick = onQuickConnect,
+        )
+
         CoreSelector(
             selected = selectedCore,
             onSelect = onSelectCore,

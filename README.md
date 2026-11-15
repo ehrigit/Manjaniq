@@ -18,7 +18,7 @@
 
 Manjaniq is a modular Android networking client that integrates third-party cores to support internet access in restrictive network environments. It includes techniques intended to help circumvent censorship and DPI-based filtering.
 
-Engineered for local SOCKS5 and loopback traffic routing (operating strictly without VPN/TUN layers), Manjaniq relies on a modern **Jetpack Compose** interface to deliver a stable, secure, and lightweight proxy management experience.
+Engineered for local SOCKS5 and loopback traffic routing, Manjaniq relies on a modern **Jetpack Compose** interface to deliver a stable, secure, and lightweight proxy management experience. Manual engine startup remains SOCKS5-only; the optional **Quick Connect** button adds a one-tap TUN→SOCKS5 VPN tunnel that routes device traffic through the running core on demand.
 
 ---
 
@@ -31,7 +31,8 @@ Engineered for local SOCKS5 and loopback traffic routing (operating strictly wit
 
 ## ✨ Key Features
 
-* **Pure SOCKS5 / Loopback Architecture:** Binds directly to a local loopback port (`127.0.0.1:1819`) without invoking system-wide VPN services.
+* **Pure SOCKS5 / Loopback Architecture:** Binds directly to a local loopback port (`127.0.0.1:1819`); manual engine startup never touches system routing.
+* **Quick Connect VPN:** One tap on the Home button starts the selected core, waits for its local SOCKS5 listener (e.g. `127.0.0.1:1819`) and brings up an Android `VpnService` tunnel that routes device TCP and DNS traffic through it. Tap again to tear down. Note: RSTA is a single-destination SNI-spoofing relay, not a general-purpose SOCKS5 proxy, so the full-device tunnel is only usable with Aether.
 * **Censorship & DPI Evasion:** Built-in techniques and modular core support designed to bypass deep packet inspection and restrictive filtering.
 * **Psiphon Support with Conditional UI:** Integrated Psiphon tunneling capabilities featuring dynamically conditioned **Exit Country Codes** (visible and active exclusively when Psiphon is toggled ON).
 * **Advanced Proxy Settings:** Comprehensive scan modes, IP version selector, and UDP obfuscation controls.

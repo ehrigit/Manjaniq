@@ -28,6 +28,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.manjaniq.RemoteControlHost
 import com.manjaniq.remotecontrol.SubscriptionSnapshot
 import com.manjaniq.core.AetherSettingsStorage
@@ -35,6 +37,8 @@ import com.manjaniq.core.AppLanguage
 import com.manjaniq.core.AppPreferences
 import com.manjaniq.core.ConfigStore
 import com.manjaniq.core.EngineRepository
+import com.manjaniq.quickconnect.QuickConnectController
+import com.manjaniq.quickconnect.QuickConnectStatus
 import com.manjaniq.service.AetherService
 import com.manjaniq.ui.navigation.AppDestination
 import com.manjaniq.ui.screens.AboutScreen
@@ -61,6 +65,7 @@ fun ManjaniqApp() {
 
     val ui by EngineRepository.uiState.collectAsState()
     val logs by EngineRepository.logs.collectAsState()
+    val quickConnectState by QuickConnectController.state.collectAsState()
 
     // Process-scoped remote-control session (created lazily by the application
     // root). The settings section only reads its published snapshot; a null
@@ -85,13 +90,40 @@ fun ManjaniqApp() {
         }
     }
 
+    val activity = LocalContext.current as? android.app.Activity
+
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val navController = rememberNavController()
+
+    // Quick Connect: the VPN needs explicit user consent once per app
+    // install. The launcher only forwards the consent verdict; the actual
+    // orchestration lives in QuickConnectController.
+    val quickConnectVpnConsent = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            QuickConnectController.connect(appContext)
+        }
+    }
+    val onQuickConnect: () -> Unit = {
+        when (quickConnectState.status) {
+            QuickConnectStatus.IDLE -> {
+                val prepare = activity?.let { android.net.VpnService.prepare(it) }
+                if (prepare == null) {
+                    QuickConnectController.connect(appContext)
+                } else {
+                    quickConnectVpnConsent.launch(prepare)
+                }
+            }
+            QuickConnectStatus.CONNECTING,
+            QuickConnectStatus.CONNECTED,
+            QuickConnectStatus.STOPPING -> QuickConnectController.disconnect(appContext)
+        }
+    }
     val navBackStack by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStack?.destination?.route ?: AppDestination.Home.route
 
-    val activity = LocalContext.current as? android.app.Activity
     val layoutDirection = if (currentLang == AppLanguage.FA) LayoutDirection.Rtl else LayoutDirection.Ltr
 
     CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
@@ -177,6 +209,8 @@ fun ManjaniqApp() {
                                         launchSingleTop = true
                                     }
                                 },
+                                quickConnectState = quickConnectState,
+                                onQuickConnect = onQuickConnect,
                                 onSaveConfig = { saved, restart ->
                                     configStore.save(saved)
                                     config = saved

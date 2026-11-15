@@ -413,4 +413,22 @@
         <item>فقط رله‌های عمومی</item>
         <item>فقط BridgeDB</item>
     </string-array>
+
+    <!-- Quick Connect (VPN tunnel control) -->
+    <string name="quick_connect_title">اتصال سریع</string>
+    <string name="quick_connect_hint_idle">برای اتصال ضربه بزنید</string>
+    <string name="quick_connect_connecting">در حال اتصال…</string>
+    <string name="quick_connect_stopping">در حال قطع…</string>
+    <string name="quick_connect_connected_fmt">متصل · %1$s — %2$s</string>
+    <string name="quick_connect_timeout">هستهٔ انتخابی به‌موقع آماده نشد</string>
+    <string name="quick_connect_error">اتصال سریع ناموفق بود</string>
+    <string name="quick_connect_session_lost">ارتباط قطع شد؛ هسته یا VPN متوقف شد</string>
+    <string name="quick_connect_cd">دکمهٔ اتصال سریع</string>
+    <string name="quick_connect_rsta_note">RSTA فقط به یک مقصد مشخص وصل می‌شود؛ VPN کامل دستگاه به Aether نیاز دارد</string>
+    <string name="vpn_session_name">اتصال سریع منجنیق</string>
+    <string name="vpn_notification_title">منجنیق — VPN اتصال سریع</string>
+    <string name="vpn_notification_channel_name">VPN اتصال سریع</string>
+    <string name="vpn_notification_channel_desc">هنگامی نمایش داده می‌شود که منجنیق ترافیک دستگاه را از پروکسی محلی عبور می‌دهد</string>
+    <string name="vpn_notification_connecting">در حال برقراری تونل…</string>
+    <string name="vpn_notification_running">ترافیک دستگاه از %1$s عبور می‌کند</string>
 </resources>
