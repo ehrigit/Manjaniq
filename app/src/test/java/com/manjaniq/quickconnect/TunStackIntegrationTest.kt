@@ -389,21 +389,6 @@ class TunStackIntegrationTest {
         return out.toByteArray()
     }
 
-    /** Reads exactly [n] bytes (used by the mock). */
-    private fun readExact(input: InputStream, n: Int): ByteArray? {
-        val buffer = ByteArray(n)
-        var offset = 0
-        while (offset < n) {
-            val read = try {
-                input.read(buffer, offset, n - offset)
-            } catch (e: java.io.IOException) {
-                return null
-            }
-            if (read < 0) return null
-            offset += read
-        }
-        return buffer
-    }
 }
 
 /**
@@ -584,4 +569,20 @@ internal class MockSocks5Server(
             }
         }
     }
+}
+
+/** Reads exactly [n] bytes from [input]; null on EOF/timeout. */
+private fun readExact(input: InputStream, n: Int): ByteArray? {
+    val buffer = ByteArray(n)
+    var offset = 0
+    while (offset < n) {
+        val read = try {
+            input.read(buffer, offset, n - offset)
+        } catch (e: java.io.IOException) {
+            return null
+        }
+        if (read < 0) return null
+        offset += read
+    }
+    return buffer
 }
