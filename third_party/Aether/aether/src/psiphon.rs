@@ -746,6 +746,8 @@ fn expected_without_inproxy(text: &str) -> bool {
         || text.contains("hasRoutableIPv6Interface")
         || text.contains("unable to determine IPv6 route")
         || text.contains("route ip+net")
+        || text.contains("DoFileMigration")
+        || text.contains("old path does not exist")
 }
 
 fn pick<'a>(message: &'a str, data: &'a serde_json::Value) -> String {
