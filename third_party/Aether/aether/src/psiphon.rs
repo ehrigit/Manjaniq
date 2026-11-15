@@ -748,6 +748,16 @@ fn expected_without_inproxy(text: &str) -> bool {
         || text.contains("route ip+net")
         || text.contains("DoFileMigration")
         || text.contains("old path does not exist")
+        // S3 server-list fetch timeouts and transient network errors behind
+        // restricted networks: Psiphon should fall back to local/cached state
+        // without aborting the carrier.
+        || text.contains("context deadline exceeded")
+        || text.contains("i/o timeout")
+        || text.contains("connection refused")
+        || text.contains("no such host")
+        || text.contains("unexpected EOF")
+        || text.contains("server list fetch failed")
+        || text.contains("server_list_compressed")
 }
 
 fn pick<'a>(message: &'a str, data: &'a serde_json::Value) -> String {
