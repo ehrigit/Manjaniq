@@ -59,7 +59,56 @@ internal class TunStack(
     var packetsOut: Long = 0
         private set
 
+    /** Diagnostics: parsed IPv4 packets (others are dropped before this point). */
+    @Volatile
+    var ipv4PacketsIn: Long = 0
+        private set
+
+    @Volatile
+    var tcpPacketsIn: Long = 0
+        private set
+
+    @Volatile
+    var udpPacketsIn: Long = 0
+        private set
+
+    @Volatile
+    var connectionsCreated: Long = 0
+        private set
+
+    @Volatile
+    var socksAttempts: Long = 0
+        private set
+
+    @Volatile
+    var socksSuccesses: Long = 0
+        private set
+
+    @Volatile
+    var bytesToUpstream: Long = 0
+        private set
+
+    @Volatile
+    var bytesFromUpstream: Long = 0
+        private set
+
+    @Volatile
+    var dnsQueries: Long = 0
+        private set
+
+    @Volatile
+    var dnsResponses: Long = 0
+        private set
+
+    @Volatile
+    var abortedConnections: Long = 0
+        private set
+
     private val bytesRelayed = AtomicLong(0)
+
+    /** Last time a stats line was emitted; the sweeper publishes every few seconds. */
+    private val lastStatsAt = AtomicLong(0)
+    private val lastStatsPacketsIn = AtomicLong(0)
 
     private val isnSource = java.util.concurrent.atomic.AtomicInteger(0x3159_2A00)
 
@@ -87,8 +136,12 @@ internal class TunStack(
     fun handlePacket(raw: ByteArray, length: Int = raw.size) {
         if (!running) return
         packetsIn++
+        if (packetsIn == 1L) {
+            log("first app packet entered the tunnel (${length} bytes)")
+        }
         val ip = TunPackets.parseIpv4(raw, length) ?: return
         if (ip.moreFragments || ip.fragmentOffset != 0) return // no reassembly
+        ipv4PacketsIn++
         when (ip.protocol) {
             TunPackets.PROTO_TCP -> handleTcp(ip, raw)
             TunPackets.PROTO_UDP -> handleUdp(ip, raw)
@@ -97,13 +150,23 @@ internal class TunStack(
 
     private fun handleTcp(ip: TunPackets.Ipv4Packet, raw: ByteArray) {
         val seg = TunPackets.parseTcp(raw, ip.payloadOffset, ip.payloadLength) ?: return
+        tcpPacketsIn++
         val key = ConnKey(ip.srcIp, seg.srcPort, ip.dstIp, seg.dstPort)
         val existing = conns[key]
         if (existing == null) {
             val wantsOpen =
                 seg.flags and TunPackets.TCP_SYN != 0 && seg.flags and TunPackets.TCP_ACK == 0
             if (wantsOpen) {
-                val conn = TcpConnection(key, nextIsn(), seg.seq + 1)
+                connectionsCreated++
+                // Learn both the receive window and the MSS the app offered so
+                // we neither exceed them nor stall on a tiny initial window.
+                val peerWindow = seg.window.coerceAtLeast(MSS)
+                val peerMss = mssOf(raw, seg, ip.payloadOffset) ?: MSS
+                val conn = TcpConnection(
+                    key, nextIsn(), seg.seq + 1,
+                    initialPeerWindow = peerWindow,
+                    sendMss = minOf(MSS, peerMss),
+                )
                 conns[key] = conn
                 conn.onSynReceived()
                 val dstIp = ip.dstIp
@@ -123,20 +186,46 @@ internal class TunStack(
 
     private fun handleUdp(ip: TunPackets.Ipv4Packet, raw: ByteArray) {
         val udp = TunPackets.parseUdp(raw, ip.payloadOffset, ip.payloadLength) ?: return
+        udpPacketsIn++
         if (udp.dstPort != 53) return // only DNS is carried; everything else is dropped
         val query = raw.copyOfRange(udp.payloadOffset, udp.payloadOffset + udp.payloadLength)
         val replyToIp = ip.srcIp
         val replyToPort = udp.srcPort
         val dnsServerIp = ip.dstIp
         dnsExecutor.execute {
-            val response = dnsOverTcp(dnsServerIp, query)
+            dnsQueries++
+            var response = dnsOverTcp(dnsServerIp, query)
+            var responder = dnsServerIp
+            if (response == null) {
+                // The app's chosen resolver may be unreachable from the proxy's
+                // egress; try the other well-known anycast resolver through the
+                // same SOCKS path before giving up.
+                val fallback = if (dnsServerIp == DNS_PRIMARY) DNS_SECONDARY else DNS_PRIMARY
+                log("DNS via ${TunPackets.ipString(dnsServerIp)} failed; retrying via ${TunPackets.ipString(fallback)}")
+                response = dnsOverTcp(fallback, query)
+                if (response != null) responder = fallback
+            }
             if (response != null && running) {
-                val packet = TunPackets.buildUdp(
-                    dnsServerIp, replyToIp, 53, replyToPort,
-                    response, 0, response.size,
+                dnsResponses++
+                emit(
+                    TunPackets.buildUdp(
+                        responder, replyToIp, 53, replyToPort,
+                        response, 0, response.size,
+                    ),
                 )
-                packetsOut++
-                sendToTun(packet)
+            } else if (running) {
+                log("DNS query failed via all resolvers (${TunPackets.ipString(dnsServerIp)}, fallback)")
+                // Fail fast with SERVFAIL instead of letting the app time out
+                // blindly; the query id and question are echoed verbatim.
+                val servfail = servFailFor(query)
+                if (servfail != null) {
+                    emit(
+                        TunPackets.buildUdp(
+                            dnsServerIp, replyToIp, 53, replyToPort,
+                            servfail, 0, servfail.size,
+                        ),
+                    )
+                }
             }
         }
     }
@@ -170,7 +259,24 @@ internal class TunStack(
     private fun sweep() {
         val now = System.currentTimeMillis()
         for (conn in conns.values) conn.onSweep(now)
+        // Publish a one-line stats summary every few seconds while traffic flows,
+        // so "VPN is up but nothing moves" is diagnosable from logcat alone.
+        if (packetsIn != lastStatsPacketsIn.get() &&
+            now - lastStatsAt.get() >= STATS_INTERVAL_MS
+        ) {
+            if (lastStatsAt.compareAndSet(lastStatsAt.get(), now)) {
+                lastStatsPacketsIn.set(packetsIn)
+                log(statsSummary())
+            }
+        }
     }
+
+    /** One-line, traffic-aggregate snapshot; never includes payloads. */
+    fun statsSummary(): String =
+        "stats: packetsIn=$packetsIn packetsOut=$packetsOut ipv4=$ipv4PacketsIn tcp=$tcpPacketsIn udp=$udpPacketsIn " +
+            "connsCreated=$connectionsCreated active=${conns.size} socksAttempts=$socksAttempts socksOk=$socksSuccesses " +
+            "bytesUp=$bytesToUpstream bytesDown=$bytesFromUpstream dnsQueries=$dnsQueries dnsResponses=$dnsResponses " +
+            "aborted=$abortedConnections"
 
     /** Tears down every connection, the dial/DNS executors and the sweeper. */
     fun close() {
@@ -244,6 +350,43 @@ internal class TunStack(
         return socket
     }
 
+    /** Builds a SERVFAIL answer preserving the query id and question section. */
+    private fun servFailFor(query: ByteArray): ByteArray? {
+        if (query.size < 12) return null
+        val out = query.copyOf()
+        out[2] = 0x81.toByte()       // RD + RA
+        out[3] = 0x82.toByte()       // RCODE = SERVFAIL
+        out[6] = 0; out[7] = 0       // ANCOUNT = 0
+        out[8] = 0; out[9] = 0       // NSCOUNT = 0
+        out[10] = 0; out[11] = 0     // ARCOUNT = 0
+        return out
+    }
+
+    /** Scans the TCP option area ([seg] at [headerOffset] in [raw]) for an MSS value. */
+    private fun mssOf(raw: ByteArray, seg: TunPackets.TcpSegment, headerOffset: Int): Int? {
+        if (seg.dataOffset <= 20) return null
+        var i = headerOffset + 20
+        val end = headerOffset + seg.dataOffset
+        while (i < end) {
+            val kind = raw[i].toInt() and 0xFF
+            when (kind) {
+                0 -> return null // end of options
+                1 -> {
+                    i += 1 // NOP
+                    continue
+                }
+                else -> {
+                    if (i + 1 >= end) return null
+                    val length = raw[i + 1].toInt() and 0xFF
+                    if (length < 2 || i + length > end) return null
+                    if (kind == 2 && length == 4) return TunPackets.readShort(raw, i + 2)
+                    i += length
+                }
+            }
+        }
+        return null
+    }
+
     /** Blocking read of exactly [n] bytes, relying on the socket's soTimeout. */
     private fun readExact(input: InputStream, n: Int): ByteArray? {
         val buf = ByteArray(n)
@@ -286,6 +429,7 @@ internal class TunStack(
     }
 
     private fun dialUpstream(conn: TcpConnection, dstIp: Int, dstPort: Int) {
+        socksAttempts++
         val socket = try {
             socksConnect(dstIp, dstPort)
         } catch (t: Throwable) {
@@ -293,6 +437,7 @@ internal class TunStack(
             conn.onUpstreamDialFailed()
             return
         }
+        socksSuccesses++
         conn.onUpstreamConnected(socket)
     }
 
@@ -317,6 +462,8 @@ internal class TunStack(
         private val key: ConnKey,
         private val isn: Int,
         private var rcvNxt: Int,
+        initialPeerWindow: Int = INITIAL_PEER_WINDOW,
+        private val sendMss: Int = MSS,
     ) {
         private val lock = Any()
 
@@ -331,7 +478,7 @@ internal class TunStack(
 
         private var sndUna = isn + 1
         private var sndNxt = isn + 1
-        private var peerWindow = INITIAL_PEER_WINDOW
+        private var peerWindow = initialPeerWindow
 
         private val unacked = ArrayDeque<SentSegment>()
 
@@ -371,7 +518,7 @@ internal class TunStack(
                 if (closed) return
 
                 if (seg.flags and TunPackets.TCP_RST != 0) {
-                    abortLocked()
+                    abortLocked("peer sent RST")
                     return
                 }
 
@@ -476,9 +623,10 @@ internal class TunStack(
                         output.write(buffered)
                         output.flush()
                         bytesRelayed.addAndGet(buffered.size.toLong())
+                        bytesToUpstream += buffered.size.toLong()
                     } catch (t: Throwable) {
                         log("upstream write failed for $key: ${t.message}")
-                        abortLocked()
+                        abortLocked("upstream write failed")
                         return
                     }
                 }
@@ -509,6 +657,7 @@ internal class TunStack(
                     val n = input.read(buffer)
                     if (n < 0) break
                     bytesRelayed.addAndGet(n.toLong())
+                    bytesFromUpstream += n.toLong()
                     synchronized(lock) {
                         if (closed) return
                         pendingOut.write(buffer, 0, n)
@@ -547,7 +696,7 @@ internal class TunStack(
                 // Handshake never completed: retransmit SYN-ACK, then give up.
                 if (state == TcpState.SYN_RECEIVED) {
                     if (now - synAckSentAt > SYN_ACK_TIMEOUT_MS) {
-                        abortLocked()
+                        abortLocked("handshake never completed")
                         return
                     }
                     if (now - synAckSentAt >= RETRANSMIT_MS) {
@@ -563,17 +712,18 @@ internal class TunStack(
                         if (now - segment.sentAt < RETRANSMIT_MS) continue
                         segment.retransmits += 1
                         if (segment.retransmits > MAX_RETRANSMITS) {
+                            log("connection ${key.srcPort}→${key.dstPort} giving up after $MAX_RETRANSMITS retransmits")
                             aborted = true
                             break
                         }
                         emitSegmentLocked(segment)
                     }
                     if (aborted) {
-                        abortLocked()
+                        abortLocked("retransmits exhausted")
                         return
                     }
                 }
-                if (now - lastActivity > IDLE_TIMEOUT_MS) abortLocked()
+                if (now - lastActivity > IDLE_TIMEOUT_MS) abortLocked("idle timeout")
             }
         }
 
@@ -588,14 +738,15 @@ internal class TunStack(
                     output.write(raw, offset, length)
                     output.flush()
                     bytesRelayed.addAndGet(length.toLong())
+                    bytesToUpstream += length.toLong()
                 } catch (t: Throwable) {
                     log("upstream write failed for $key: ${t.message}")
-                    abortLocked()
+                    abortLocked("upstream write failed")
                 }
             } else {
                 if (pendingIn.size() + length > MAX_PENDING_IN) {
                     log("pending-upstream buffer exceeded for $key; dropping connection")
-                    abortLocked()
+                    abortLocked("pending-upstream buffer exceeded")
                     return
                 }
                 pendingIn.write(raw, offset, length)
@@ -608,7 +759,7 @@ internal class TunStack(
                 socket.shutdownOutput()
             } catch (t: Throwable) {
                 log("upstream shutdownOutput failed for $key: ${t.message}")
-                abortLocked()
+                abortLocked("upstream half-close failed")
             }
         }
 
@@ -624,7 +775,7 @@ internal class TunStack(
                     val inFlight = sndNxt - sndUna
                     val room = peerWindow - inFlight
                     if (room <= 0) return // window exhausted; resume when ACKs arrive
-                    val chunk = minOf(MSS, remaining, room)
+                    val chunk = minOf(sendMss, remaining, room)
                     val payload = snapshot.copyOfRange(outConsumed, outConsumed + chunk)
                     val segment = SentSegment(
                         seq = sndNxt,
@@ -716,12 +867,14 @@ internal class TunStack(
             )
         }
 
-        private fun abortLocked() {
+        private fun abortLocked(reason: String = "unspecified") {
             if (closed) return
             closed = true
             state = TcpState.CLOSED
+            abortedConnections++
             conns.remove(key)
             closeUpstreamLocked()
+            log("connection ${key.srcPort}→${key.dstPort} aborted: $reason")
         }
 
         /** Abrupt teardown initiated by the owner (service stop): no packets sent. */
@@ -767,6 +920,9 @@ internal class TunStack(
         const val SOCKS_CONNECT_TIMEOUT_MS = 8_000
         const val SOCKS_REPLY_TIMEOUT_MS = 8_000
         const val DNS_TIMEOUT_MS = 6_000
+        const val STATS_INTERVAL_MS = 5_000L
+        private val DNS_PRIMARY = requireNotNull(TunPackets.parseIpv4Literal("8.8.8.8"))
+        private val DNS_SECONDARY = requireNotNull(TunPackets.parseIpv4Literal("1.1.1.1"))
         val EMPTY = ByteArray(0)
     }
 }

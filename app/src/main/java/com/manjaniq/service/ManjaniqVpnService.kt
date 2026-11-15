@@ -37,8 +37,13 @@ class ManjaniqVpnService : VpnService() {
 
     enum class VpnState { STOPPED, STARTING, CONNECTED, STOPPING, ERROR }
 
+    @Volatile
     private var tunPfd: ParcelFileDescriptor? = null
+
+    @Volatile
     private var tunOutput: FileOutputStream? = null
+
+    @Volatile
     private var stack: TunStack? = null
 
     @Volatile
@@ -91,11 +96,9 @@ class ManjaniqVpnService : VpnService() {
                 .setMtu(TUN_MTU)
                 .addAddress(TUN_ADDRESS, TUN_PREFIX)
                 .addRoute(DEFAULT_ROUTE, 0)
-                // Blackhole IPv6: an IPv6 route with no v6 proxy support would
-                // leak. Apps race v4 alongside v6 (Happy Eyeballs), so this
-                // only makes them prefer the tunnelled v4 path.
-                .addAddress(TUN_ADDRESS_V6, TUN_PREFIX_V6)
-                .addRoute(DEFAULT_ROUTE_V6, 0)
+                // No IPv6 route is installed on purpose: TunStack carries IPv4
+                // only. Publishing no v6 route makes apps fall back to IPv4
+                // immediately instead of racing a dead blackhole first.
                 .addDnsServer(PRIMARY_DNS)
                 .addDnsServer(SECONDARY_DNS)
                 .apply {
@@ -155,7 +158,7 @@ class ManjaniqVpnService : VpnService() {
 
         _state.value = VpnState.CONNECTED
         promoteForeground(getString(R.string.vpn_notification_running, "$proxyHost:$proxyPort"))
-        Log.i(TAG, "VPN up; proxying via $proxyHost:$proxyPort")
+        Log.i(TAG, "VPN up; TUN $TUN_ADDRESS/$TUN_PREFIX mtu=$TUN_MTU dns=$PRIMARY_DNS/$SECONDARY_DNS proxy=$proxyHost:$proxyPort ownUidExcluded=$packageName")
     }
 
     private fun stopTunnel() {
@@ -269,12 +272,9 @@ class ManjaniqVpnService : VpnService() {
 
         private const val TUN_ADDRESS = "10.111.222.2"
         private const val TUN_PREFIX = 32
-        private const val TUN_ADDRESS_V6 = "fd6d:6a6e:6a69::2"
-        private const val TUN_PREFIX_V6 = 128
         private const val TUN_MTU = 1500
         private const val TUN_READ_BUFFER = 32767
         private const val DEFAULT_ROUTE = "0.0.0.0"
-        private const val DEFAULT_ROUTE_V6 = "::"
         private const val PRIMARY_DNS = "1.1.1.1"
         private const val SECONDARY_DNS = "8.8.8.8"
 
