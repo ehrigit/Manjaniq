@@ -86,7 +86,7 @@ class ManjaniqVpnService : VpnService() {
         teardownTunnel() // idempotent: never stack two tunnels
 
         val established: ParcelFileDescriptor? = try {
-            VpnService.Builder()
+            Builder() // inner Builder: outer receiver is this VpnService
                 .setSession(getString(R.string.vpn_session_name))
                 .setMtu(TUN_MTU)
                 .addAddress(TUN_ADDRESS, TUN_PREFIX)
