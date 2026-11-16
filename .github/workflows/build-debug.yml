@@ -663,6 +663,27 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # The emulator uses a fresh runner, so its first Gradle invocation would
+      # otherwise download the wrapper only after the native builds and boot.
+      # Fetch it early and retry transient connection resets, before any tests
+      # have run. This never retries or hides an instrumentation failure.
+      - name: Prepare Gradle wrapper for emulator
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if timeout 180 ./gradlew --version > "$RUNNER_TEMP/gradle-wrapper.log" 2>&1; then
+              cat "$RUNNER_TEMP/gradle-wrapper.log"
+              exit 0
+            fi
+            tail -n 15 "$RUNNER_TEMP/gradle-wrapper.log"
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Gradle wrapper could not be prepared after three attempts"
+              exit 1
+            fi
+            echo "::warning::Gradle wrapper download failed on attempt $attempt; retrying"
+            sleep "$((attempt * 5))"
+          done
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
