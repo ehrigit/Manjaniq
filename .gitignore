@@ -34,3 +34,7 @@ local.properties
 *.aab
 *.so
 !app/src/main/jniLibs/**/*.so
+
+# Signed Psiphon bootstrap data and helper notices are produced for each APK build.
+/app/src/main/assets/psiphon_servers.dat
+/app/src/main/assets/psiphon-licenses/

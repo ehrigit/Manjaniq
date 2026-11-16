@@ -91,7 +91,7 @@ class AetherEditorRepository(context: Context) : AetherEditorSource {
     }
 
     override suspend fun psiphonRegions(): List<String> = withContext(Dispatchers.IO) {
-        val entries = PsiphonServerList.entriesFile(appContext.filesDir, AetherIdentityManager.workDir(appContext)) { problem ->
+        val entries = PsiphonServerList.entriesFile(appContext, AetherIdentityManager.workDir(appContext)) { problem ->
             Log.w("AetherEditor", "${PsiphonServerList.PSIPHON_SERVERS_DAT} is not a usable Psiphon list", problem)
         }
         val listed = entries?.let { file ->

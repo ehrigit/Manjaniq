@@ -167,8 +167,16 @@ if ! git -c core.longpaths=true clone --quiet --depth 50 --branch "$branch" "$re
     exit 1
 fi
 
-git -C "$src" checkout --quiet "$commit" 2>/dev/null ||
-    echo "psiphon-build: pinned commit is gone, using $branch as it stands" >&2
+# Do not silently ship a different client (or different license notices) when
+# the pinned revision falls outside the shallow branch history.
+if ! git -C "$src" checkout --quiet "$commit" 2>/dev/null; then
+    git -C "$src" fetch --quiet --depth 1 origin "$commit"
+    git -C "$src" checkout --quiet "$commit"
+fi
+if [ "$(git -C "$src" rev-parse HEAD)" != "$commit" ]; then
+    echo "psiphon-build: could not check out the pinned client revision" >&2
+    exit 1
+fi
 
 ext=""
 if [ "$goos" = "windows" ]; then

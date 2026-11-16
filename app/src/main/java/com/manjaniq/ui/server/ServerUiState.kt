@@ -18,6 +18,7 @@ import com.manjaniq.core.AetherTorBridges
 import com.manjaniq.core.AetherTorRelays
 import com.manjaniq.core.AetherTransport
 import com.manjaniq.core.ProfileItem
+import java.util.Locale
 
 sealed interface ValidationResult {
     data object Valid : ValidationResult
@@ -106,7 +107,7 @@ data class AetherUiState(
             psiphonCdnIps = config.aetherPsiphonCdnIps.orEmpty(),
             psiphonCdnSni = config.aetherPsiphonCdnSni.orEmpty(),
             psiphonCdnSets = AetherPsiphonCdnSet.parse(config.aetherPsiphonCdnSets),
-            psiphonRegion = config.aetherPsiphonRegion?.trim()?.uppercase().orEmpty(),
+            psiphonRegion = config.aetherPsiphonRegion?.trim()?.uppercase(Locale.ROOT).orEmpty(),
             psiphonBundledList = config.aetherPsiphonBundledList != false,
             tor = AetherTor.fromString(config.aetherTor),
             torBridges = AetherTorBridges.fromString(config.aetherTorBridges),
@@ -152,7 +153,7 @@ data class AetherUiState(
             config.aetherPsiphonCdnSets = null
         }
         config.aetherPsiphonRegion = if (psiphon != AetherPsiphon.OFF) {
-            psiphonRegion.trim().uppercase().ifEmpty { null }
+            psiphonRegion.trim().uppercase(Locale.ROOT).ifEmpty { null }
         } else {
             null
         }

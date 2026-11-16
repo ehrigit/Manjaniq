@@ -65,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringArrayResource
@@ -95,6 +96,8 @@ import com.manjaniq.core.AetherTor
 import com.manjaniq.core.AetherTorBridges
 import com.manjaniq.core.AetherTorRelays
 import com.manjaniq.core.AetherTransport
+import com.manjaniq.core.AppPreferences
+import com.manjaniq.core.LocaleHelper
 import com.manjaniq.core.ProfileItem
 import com.manjaniq.core.models.EngineState
 import com.manjaniq.service.AetherService
@@ -109,6 +112,15 @@ private val AetherNeonBlue = Color(0xFF00D5FF)
 class ServerAetherActivity : ComponentActivity() {
 
     private val viewModel: ServerAetherViewModel by viewModels()
+
+    override fun attachBaseContext(newBase: Context) {
+        // The standalone editor must use the same app language as the home
+        // panel, including country names and the "Any" option.
+        val localized = runCatching {
+            LocaleHelper.wrapContext(newBase, AppPreferences(newBase).currentLanguage())
+        }.getOrDefault(newBase)
+        super.attachBaseContext(localized)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -820,16 +832,6 @@ private fun ServerAetherForm(
     val psiphonModeValues = stringArrayResource(R.array.aether_psiphon_mode_values).toList()
     val psiphonCdnSetEntries = stringArrayResource(R.array.aether_psiphon_cdn_set_entries).toList()
     val psiphonCdnSetOptions = remember { AetherPsiphonCdnSet.entries }
-    val psiphonAnyRegionLabel = stringResource(R.string.aether_psiphon_region_any)
-    val (psiphonRegionValues, psiphonRegionEntries) = remember(psiphonRegions, state.psiphonRegion, psiphonAnyRegionLabel) {
-        val selected = state.psiphonRegion.trim().uppercase()
-        val codes = if (selected.isNotEmpty() && selected !in psiphonRegions) {
-            (psiphonRegions + selected).sorted()
-        } else {
-            psiphonRegions
-        }
-        (listOf("") + codes) to (listOf(psiphonAnyRegionLabel) + codes.map(::psiphonRegionDisplayName))
-    }
     val allTorEntries = stringArrayResource(R.array.aether_tor_entries).toList()
     val allTorValues = stringArrayResource(R.array.aether_tor_values).toList()
     val (torValues, torEntries) = remember(allTorValues, allTorEntries, state.tor, state.protocol, state.psiphon) {
@@ -1119,16 +1121,13 @@ private fun ServerAetherForm(
             )
         }
 
-        if (state.psiphon != AetherPsiphon.REVERSE) {
-            FormDropdownField(
-                label = stringResource(R.string.aether_lab_psiphon_region),
-                selectedValue = state.psiphonRegion,
-                options = psiphonRegionValues,
-                optionLabels = psiphonRegionEntries,
-                enabled = fieldsEnabled,
-                onValueChange = { onStateChange(state.copy(psiphonRegion = it)) },
-            )
-        }
+        PsiphonCountryDropdown(
+            selected = state.psiphonRegion,
+            regions = psiphonRegions,
+            enabled = fieldsEnabled,
+            reverse = state.psiphon == AetherPsiphon.REVERSE,
+            onValueChange = { onStateChange(state.copy(psiphonRegion = it)) },
+        )
 
         SettingsSwitch(
             title = stringResource(R.string.aether_lab_psiphon_bundled_list),
@@ -1414,9 +1413,40 @@ private fun ServerAetherForm(
     Spacer(modifier = Modifier.height(16.dp))
 }
 
-internal fun psiphonRegionDisplayName(code: String): String {
+@Composable
+internal fun PsiphonCountryDropdown(
+    selected: String,
+    regions: List<String>,
+    enabled: Boolean,
+    reverse: Boolean,
+    onValueChange: (String) -> Unit,
+) {
+    val any = stringResource(R.string.aether_psiphon_region_any)
+    val locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
+    val current = selected.trim().uppercase(Locale.ROOT)
+    val (values, labels) = remember(regions, current, any, locale) {
+        // Keep a previously saved choice visible even if the current list no
+        // longer advertises it; editing must not silently discard profiles.
+        val codes = (regions + listOfNotNull(current.takeIf { it.isNotEmpty() })).distinct().sorted()
+        (listOf("") + codes) to (listOf(any) + codes.map { psiphonRegionDisplayName(it, locale) })
+    }
+    FormDropdownField(
+        label = stringResource(R.string.aether_lab_psiphon_region),
+        selectedValue = current,
+        options = values,
+        optionLabels = labels,
+        supportingText = stringResource(
+            if (reverse) R.string.aether_hint_psiphon_region_reverse else R.string.aether_hint_psiphon_region
+        ),
+        enabled = enabled,
+        onValueChange = onValueChange,
+        modifier = Modifier.testTag("psiphon_country"),
+    )
+}
+
+internal fun psiphonRegionDisplayName(code: String, locale: Locale = Locale.getDefault()): String {
     val clean = code.trim().uppercase(Locale.ROOT)
-    val name = Locale("", clean).displayCountry
+    val name = Locale("", clean).getDisplayCountry(locale)
     return if (name.isNotEmpty() && !name.equals(clean, ignoreCase = true)) {
         "$name ($clean)"
     } else {

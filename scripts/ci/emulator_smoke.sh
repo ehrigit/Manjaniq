@@ -184,9 +184,10 @@ log "Phase 2: instrumentation suite against the real UI"
 chmod +x gradlew
 diag "clear logcat" adb logcat -c
 GRADLE_EXIT=0
-./gradlew connectedDebugAndroidTest --stacktrace > "$OUT/connected.log" 2>&1 || GRADLE_EXIT=$?
+# Preserve the complete log and surface the underlying Gradle failure as an
+# annotation before missing-test annotations can exhaust the per-step limit.
+bash scripts/ci/gradle_step.sh "$OUT/connected.log" connectedDebugAndroidTest -Pmanjaniq.abis=x86_64 --stacktrace || GRADLE_EXIT=$?
 echo "gradle connectedDebugAndroidTest exit=$GRADLE_EXIT"
-tail -n 60 "$OUT/connected.log"
 adb logcat -d > "$OUT/logcat-phase2.txt" || echo "::warning::could not capture phase-2 logcat"
 
 RESULTS_DIR="app/build/outputs/androidTest-results/connected"
@@ -214,6 +215,16 @@ required = [
     ('com.manjaniq.AetherNativeTest', 'theEngineGetsWritableDirectories'),
     ('com.manjaniq.AetherNativeTest', 'theIdentityPathIsPreparedInsideFilesDir'),
     ('com.manjaniq.AetherNativeTest', 'aStartIsReportedByTheJobApiAndTheLogSink'),
+    # Psiphon: actual editor interaction and persistence, language, native
+    # helper exec, and the configuration handed to the real client. None is
+    # an assertion that a network tunnel or a specific exit was obtained.
+    ('com.manjaniq.PsiphonAndroidTest', 'countryDropdownSavesReopensAndReturnsToAny'),
+    ('com.manjaniq.PsiphonAndroidTest', 'standaloneEditorUsesTheAppLanguageForCountries'),
+    ('com.manjaniq.PsiphonAndroidTest', 'packagedPsiphonHelperActuallyExecutesOnAndroid'),
+    ('com.manjaniq.PsiphonAndroidTest', 'selectedCountriesReachTheRealHelperConfiguration'),
+    # This records actual network outcomes rather than requiring external
+    # servers to be reachable; the evidence is checked and printed below.
+    ('com.manjaniq.PsiphonLiveEvidenceTest', 'recordLiveTunnelTrafficAndExitEvidence'),
     # End-to-end proof that the userspace TUN stack relays real bytes both
     # ways on-device (SYN -> SOCKS5 CONNECT -> echo -> FIN). This is the
     # regression test for the "VPN reports CONNECTED but no app has internet"
@@ -259,6 +270,17 @@ if [ "$PY_EXIT" -ne 0 ]; then
   grep -E "FATAL EXCEPTION|AndroidRuntime|TestRunner" "$OUT/logcat-phase2.txt" | tail -n 80 || true
   fail "instrumentation gate failed (gradle exit $GRADLE_EXIT)"
 fi
+
+log "Psiphon live evidence (network-dependent, not a CI pass assertion)"
+# Keep only the fixed, non-sensitive fields emitted by the probe; no addresses,
+# URLs, credentials, raw client notices, or trace bodies enter this summary.
+grep -Eo 'PSIPHON_LIVE requested=(ANY|[A-Z]{2}) phase=[a-z_]+ tunnel=(true|false) ready=(true|false) https=[a-z_]+ exit=(unknown|[A-Z]{2}) match=(yes|no|unknown|not_requested) notice=[a-z_-]+' \
+  "$OUT/logcat-phase2.txt" > "$OUT/psiphon-live.txt" || true
+[ "$(wc -l < "$OUT/psiphon-live.txt")" -eq 3 ] || fail "expected three sanitized Psiphon live-evidence records (Any and two listed countries)"
+while IFS= read -r line; do
+  echo "$line"
+  echo "::notice title=Psiphon live evidence::$line"
+done < "$OUT/psiphon-live.txt"
 
 echo "phase2=PASS" >> "$OUT/summary.txt"
 log "EMULATOR GATE PASSED for commit $HEAD_SHA"
