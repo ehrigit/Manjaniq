@@ -1,0 +1,41 @@
+name: Inspect previous emulator evidence
+
+on:
+  push:
+    branches:
+      - arena/fdc7b9d7-manjaniq
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect-previous-emulator:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download failed run evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: emulator-evidence
+          run-id: 43782068593
+          github-token: ${{ github.token }}
+          path: previous-evidence
+      - name: Summarize Gradle failure
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          path = Path('previous-evidence/connected.log')
+          text = path.read_text(errors='replace')
+          lines = text.splitlines()
+          selected = []
+          for line in lines:
+              if re.search(r'(?i)(downloading|exception|caused by|connection reset|what went wrong|could not|failed|timed out|handshake)', line):
+                  line = re.sub(r'https?://[^\s]+', '[URL]', line)
+                  line = re.sub(r'(?i)(token|password|secret)\s*[=:]\s*\S+', r'\1=[redacted]', line)
+                  selected.append(line[:350])
+          if not selected:
+              selected = lines[-30:]
+          message = '\n'.join(selected[:35]).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::notice title=Previous emulator Gradle failure::' + message)
+          PY

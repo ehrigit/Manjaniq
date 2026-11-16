@@ -184,9 +184,10 @@ log "Phase 2: instrumentation suite against the real UI"
 chmod +x gradlew
 diag "clear logcat" adb logcat -c
 GRADLE_EXIT=0
-./gradlew connectedDebugAndroidTest --stacktrace > "$OUT/connected.log" 2>&1 || GRADLE_EXIT=$?
+# Preserve the complete log and surface the underlying Gradle failure as an
+# annotation before missing-test annotations can exhaust the per-step limit.
+bash scripts/ci/gradle_step.sh "$OUT/connected.log" connectedDebugAndroidTest --stacktrace || GRADLE_EXIT=$?
 echo "gradle connectedDebugAndroidTest exit=$GRADLE_EXIT"
-tail -n 60 "$OUT/connected.log"
 adb logcat -d > "$OUT/logcat-phase2.txt" || echo "::warning::could not capture phase-2 logcat"
 
 RESULTS_DIR="app/build/outputs/androidTest-results/connected"
