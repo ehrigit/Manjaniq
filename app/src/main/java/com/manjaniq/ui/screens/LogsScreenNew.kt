@@ -21,9 +21,47 @@ import androidx.compose.ui.unit.sp
 import com.manjaniq.R
 import com.manjaniq.ui.TestTags
 import com.manjaniq.core.EngineLog
+import com.manjaniq.ui.server.AetherLogEntry
+import com.manjaniq.ui.server.AetherLogText
+import android.util.Log
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/**
+ * Aether lines are stamped into a disjoint seq range so the drawer Logs screen can
+ * interleave them with the RSTA ring (whose seq values are small, monotonically
+ * increasing engine counters) without key collisions.
+ */
+internal const val AETHER_SEQ_BASE = 1_099_511_627_776L // 2^40
+
+internal fun aetherSeqOf(id: Long): Long = AETHER_SEQ_BASE + id
+
+internal fun aetherLevelOf(priority: Int): String = when (priority) {
+    Log.ERROR -> "ERROR"
+    Log.WARN -> "WARN"
+    Log.INFO -> "INFO"
+    Log.DEBUG, Log.VERBOSE -> "DEBUG"
+    else -> "INFO"
+}
+
+/**
+ * Interleaves the RSTA engine ring with captured Aether service lines (oldest first).
+ * Aether-only lines are tagged so a merged feed stays readable when both cores ran.
+ */
+internal fun mergeEngineLogs(
+    rsta: List<EngineLog>,
+    aether: List<AetherLogEntry>,
+    resolve: (AetherLogText) -> String,
+): List<EngineLog> =
+    (rsta + aether.map { entry ->
+        EngineLog(
+            seq = aetherSeqOf(entry.id),
+            timeMs = entry.timeMs,
+            level = aetherLevelOf(entry.priority),
+            message = "[Aether] " + resolve(entry.text),
+        )
+    }).sortedWith(compareBy(EngineLog::timeMs).thenBy { it.seq })
 
 @Composable
 fun LogsScreenNew(

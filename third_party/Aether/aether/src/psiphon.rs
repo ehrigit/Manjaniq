@@ -65,10 +65,27 @@ pub fn state_dir(base_config: &str) -> PathBuf {
 }
 
 fn region() -> Option<String> {
-    std::env::var("AETHER_PSIPHON_REGION")
-        .ok()
-        .map(|value| value.trim().to_uppercase())
-        .filter(|value| value.len() == 2 && value.chars().all(|c| c.is_ascii_alphabetic()))
+    let raw = std::env::var("AETHER_PSIPHON_REGION").ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_lowercase();
+    if lower == "any" || lower == "off" {
+        // Explicit "any": not an error, and not a country either.
+        return None;
+    }
+    let upper = trimmed.to_uppercase();
+    if upper.len() == 2 && upper.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Some(upper);
+    }
+    // An unparseable choice must never silently behave as "any": say so, loudly, every
+    // time it is honoured, and let the client leave from any region as configured.
+    let shown: String = trimmed.chars().take(16).collect();
+    log::warn!(
+        "[-] AETHER_PSIPHON_REGION \"{shown}\" is not an ISO 3166-1 alpha-2 country code; psiphon will leave from any available country"
+    );
+    None
 }
 
 fn ready_timeout() -> Duration {
@@ -718,7 +735,17 @@ fn note(kind: &str, data: &serde_json::Value) {
         "ConnectedServerRegion" => {
             if let Some(code) = data.get("serverRegion").and_then(|v| v.as_str()) {
                 if code.len() == 2 && code.bytes().all(|c| c.is_ascii_uppercase()) {
-                    log::info!("[+] psiphon connected server region: {code}");
+                    match region() {
+                        Some(want) if want == code => {
+                            log::info!("[+] psiphon connected server region: {code} (matches the requested region {want})");
+                        }
+                        Some(want) => {
+                            log::warn!("[-] psiphon connected server region {code}, not the requested region {want}");
+                        }
+                        None => {
+                            log::info!("[+] psiphon connected server region: {code}");
+                        }
+                    }
                 }
             }
         }
@@ -966,7 +993,25 @@ fn announce(proxy: SocketAddr, what: &'static str) {
             country.bytes().all(|byte| byte.is_ascii_uppercase()).then_some(country)
         }.await;
         match country {
-            Some(code) => log::info!("[+] {what} exit country: {code}"),
+            Some(code) => {
+                // In reverse mode psiphon is the carrier and the final exit is WARP; the
+                // requested region still selects the carrier server, and the UI says so.
+                let reverse = matches!(mode(), Mode::Reverse);
+                let hint = if reverse {
+                    " (psiphon is the carrier; the final exit is WARP)"
+                } else {
+                    ""
+                };
+                match region() {
+                    Some(want) if code.eq_ignore_ascii_case(&want) => {
+                        log::info!("[+] {what} exit country: {code}, matches the requested region {want}{hint}");
+                    }
+                    Some(want) => {
+                        log::warn!("[-] {what} exit country: {code}, does not match the requested region {want}{hint}");
+                    }
+                    None => log::info!("[+] {what} exit country: {code}{hint}"),
+                }
+            }
             None => log::debug!("[psiphon] exit-country lookup did not complete"),
         }
     });
@@ -1234,8 +1279,14 @@ mod tests {
         assert!(region().is_none());
         std::env::set_var("AETHER_PSIPHON_REGION", "de");
         assert_eq!(region().as_deref(), Some("DE"));
-        std::env::set_var("AETHER_PSIPHON_REGION", "germany");
+        std::env::set_var("AETHER_PSIPHON_REGION", " germany ");
         assert!(region().is_none());
+        std::env::set_var("AETHER_PSIPHON_REGION", "USA");
+        assert!(region().is_none(), "a three-letter code is not a region");
+        std::env::set_var("AETHER_PSIPHON_REGION", "D1");
+        assert!(region().is_none(), "digits are not a region");
+        std::env::set_var("AETHER_PSIPHON_REGION", "any");
+        assert!(region().is_none(), "an explicit any is no region, quietly");
 
         clear();
     }
@@ -1258,6 +1309,10 @@ mod tests {
         assert_eq!(config()["EmitDiagnosticNetworkParameters"], false);
         std::env::set_var("AETHER_PSIPHON_REGION", " ca ");
         assert_eq!(config()["EgressRegion"], "CA");
+        std::env::set_var("AETHER_PSIPHON_REGION", "germany");
+        assert!(config().get("EgressRegion").is_none(), "an unparseable region is not a config value");
+        std::env::set_var("AETHER_PSIPHON_REGION", "any");
+        assert!(config().get("EgressRegion").is_none(), "an explicit any writes no region");
         std::env::remove_var("AETHER_PSIPHON_REGION");
         assert!(config().get("EgressRegion").is_none());
         clear();

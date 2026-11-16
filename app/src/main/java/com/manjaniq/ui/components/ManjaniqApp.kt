@@ -46,6 +46,8 @@ import com.manjaniq.ui.screens.GeneralSettingsScreen
 import com.manjaniq.ui.screens.HomeScreen
 import com.manjaniq.ui.screens.LogsScreenNew
 import com.manjaniq.ui.screens.SubscriptionSection
+import com.manjaniq.ui.screens.mergeEngineLogs
+import com.manjaniq.ui.server.AetherLogText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -65,6 +67,7 @@ fun ManjaniqApp() {
 
     val ui by EngineRepository.uiState.collectAsState()
     val logs by EngineRepository.logs.collectAsState()
+    val aetherLogs by AetherService.liveLogs.collectAsState()
     val quickConnectState by QuickConnectController.state.collectAsState()
 
     // Process-scoped remote-control session (created lazily by the application
@@ -91,6 +94,16 @@ fun ManjaniqApp() {
     }
 
     val activity = LocalContext.current as? android.app.Activity
+
+    // The drawer Logs screen is one feed: RSTA ring + captured Aether lines.
+    val mergedLogs = remember(logs, aetherLogs) {
+        mergeEngineLogs(logs, aetherLogs) { text ->
+            when (text) {
+                is AetherLogText.Raw -> text.value
+                is AetherLogText.Resource -> appContext.getString(text.resId, *text.args.toTypedArray())
+            }
+        }
+    }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -246,8 +259,11 @@ fun ManjaniqApp() {
 
                         composable(AppDestination.Logs.route) {
                             LogsScreenNew(
-                                logs = logs,
-                                onClearLogs = { EngineRepository.clearLogs() },
+                                logs = mergedLogs,
+                                onClearLogs = {
+                                    EngineRepository.clearLogs()
+                                    AetherService.clearLogs()
+                                },
                             )
                         }
 

@@ -210,6 +210,7 @@ Aether is vendored in `third_party/Aether` at upstream release **v2.4.0** and co
 - **Psiphon Integration (`--psiphon`):**
   - Topologies: `off`, `chain` (*Inside Tunnel / Exit*), `reverse` (*Before Tunnel / Entry* — requires a MASQUE protocol), and `only` (*Psiphon Only*).
   - Connection modes: `auto` (CDN + Direct), `cdn` (CDN-fronted only), `direct` (Direct only), with selectable CDN provider sets (`Cloudflare`, `Fastly`, `CloudFront`, `Akamai`, `Bunny`, `Vercel`, `GitHub`, `Curated`, `Legacy`), optional custom CDN IPs/SNI, and localized exit-country selection seeded from `assets/psiphon_servers.dat`.
+  - The requested country is delivered to the sidecar as the `EgressRegion` client setting (verified on-device by `PsiphonAndroidTest`); the engine logs the requested region, the connected server region, and the observed exit country, and warns whenever any of them does not match the request. An unparseable `--psiphon-region` value is rejected with a warning instead of silently leaving from any country. Note the selection is a server-of-egress filter, not a geolocation guarantee: there is no independent exit-IP proof on the device.
   - Executes the compiled Go sidecar `libpsiphon_tunnel_core.so` directly from `ApplicationInfo.nativeLibraryDir`.
 - **Embedded Tor Integration (`--tor`):**
   - Compiled directly into `libaether.so` via Rust `arti-client 0.46`.
@@ -494,7 +495,7 @@ To configure an optional remote-control server URL at build time without editing
   - Choose **Psiphon Only** or **Tor Only** to use either carrier directly as the local SOCKS5 proxy without WARP.
 
 ### Live Logs & Configuration Portability
-- Open **Logs** from the navigation drawer to inspect live events, filter by `Info` / `Warn` / `Error`, **Pause** scrolling while diagnosing handshakes, or **Copy** logs to the clipboard.
+- Open **Logs** from the navigation drawer to inspect live events, filter by `Info` / `Warn` / `Error`, **Pause** scrolling while diagnosing handshakes, or **Copy** logs to the clipboard. The drawer feed is merged: it shows the RSTA engine ring interleaved with captured Aether service lines (tagged `[Aether]`), and **Clear** empties both.
 - RSTA configurations support full **Import JSON** / **Export JSON** compatibility with standalone RSTA `config.json` files (`rsta-source/config.json`). Aether configurations support `aether://` URI sharing and raw CLI flag editing.
 
 ---
