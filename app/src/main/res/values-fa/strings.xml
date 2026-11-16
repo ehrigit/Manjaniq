@@ -236,6 +236,8 @@
     <string name="aether_psiphon_cdn_sets_all">همهٔ CDNها</string>
     <string name="aether_lab_psiphon_region">کشور خروجی سایفون</string>
     <string name="aether_psiphon_region_any">هر کشوری</string>
+    <string name="aether_hint_psiphon_region">کشورهای سرور ممکن است تغییر کنند؛ انتخاب یک کشور اتصال را تضمین نمی‌کند.</string>
+    <string name="aether_hint_psiphon_region_reverse">در این حالت سایفون حامل وارپ است؛ خروجی نهایی وارپ است، نه سایفون.</string>
     <string name="aether_lab_psiphon_bundled_list">استفاده از فهرست سرورهای داخلی سایفون</string>
     <string name="aether_hint_psiphon_bundled_list">سایفون را پیش از نخستین اتصال با سرورهای اولیه تغذیه می‌کند؛ برای استفاده از تنها سرورهای ذخیره‌شده یا کشف زنده خاموش کنید</string>
     <string name="aether_hint_psiphon_list">جداشده با ویرگول</string>

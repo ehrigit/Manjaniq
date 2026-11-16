@@ -80,9 +80,13 @@ trap cleanup EXIT INT TERM
 build_one() {
   local label="$1" script="$2" produced="$3" packaged="$4"
   local out="$work/pt"
+  # The pinned upstream script can preserve the helper's own GPL license and
+  # the notices of its Go dependencies; include the ABI-specific notices in APKs.
+  local licenses="$repo/app/src/main/assets/psiphon-licenses/$goarch"
+  mkdir -p "$licenses"
 
   printf '\n=== %s (%s) ===\n' "$label" "$goarch" >> "$log"
-  if ! bash "$repo/third_party/Aether/$script" linux "$goarch" "$out" >> "$log" 2>&1; then
+  if ! bash "$repo/third_party/Aether/$script" linux "$goarch" "$out" "" "$licenses" >> "$log" 2>&1; then
     echo "::warning title=Helper not built::$label for $goarch - upstream script $script failed, see $log" >&2
     echo "$label=no"
     return 1

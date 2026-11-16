@@ -1,9 +1,13 @@
 package com.manjaniq.core
 
+import android.content.Context
+import android.util.Log
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.security.GeneralSecurityException
 import java.security.KeyFactory
 import java.security.MessageDigest
@@ -35,21 +39,84 @@ object PsiphonServerList {
     private const val ENTRIES_FILE = "psiphon-servers.txt"
     private val leavesFrom = Regex("""psiphon can leave from: ([A-Z]{2}(?: [A-Z]{2})*)\s*$""")
     private const val SOURCE_MARK = "psiphon-servers.source"
+    private const val MAX_COMPRESSED = 16 * 1024 * 1024
+    private const val MAX_UNCOMPRESSED = 64 * 1024 * 1024
+    private val isoCountries = Locale.getISOCountries().toSet()
 
+    private fun readBounded(input: InputStream, limit: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val size = input.read(buffer)
+            if (size < 0) break
+            if (size > limit - output.size()) throw IOException("the Psiphon list is too large")
+            output.write(buffer, 0, size)
+        }
+        return output.toByteArray()
+    }
+
+    /**
+     * Prefer a previously supplied list in filesDir. Otherwise stage the signed
+     * APK asset in the private work directory. Never overwrite a user's list,
+     * and never replace the last usable bundled copy with an invalid update.
+     */
+    @Synchronized
+    fun entriesFile(context: Context, workDir: File, onProblem: (IOException) -> Unit = {}): File? {
+        if (!workDir.isDirectory && !workDir.mkdirs()) {
+            onProblem(IOException("could not create the Psiphon work directory"))
+            return null
+        }
+        if (File(context.filesDir, PSIPHON_SERVERS_DAT).isFile) {
+            entriesFile(context.filesDir, workDir, onProblem = onProblem)?.let { return it }
+            // Leave an unusable user-supplied file untouched, but allow a clean
+            // install to fall back to the authenticated bundled list.
+        }
+        val bundledDir = File(workDir, "psiphon-bundled")
+        val cached = File(bundledDir, PSIPHON_SERVERS_DAT)
+        try {
+            val packed = context.assets.open(PSIPHON_SERVERS_DAT).use { readBounded(it, MAX_COMPRESSED) }
+            val cachedBytes = if (cached.isFile && cached.length() <= MAX_COMPRESSED) cached.readBytes() else null
+            if (cachedBytes == null || !cachedBytes.contentEquals(packed)) {
+                // Check before replacing a known-good copy. entriesFile also
+                // verifies the signature before exposing the plain entries.
+                unpack(packed, SIGNING_KEY)
+                if (!bundledDir.isDirectory && !bundledDir.mkdirs()) throw IOException("could not create bundled-list directory")
+                val fresh = File.createTempFile("psiphon-", ".new", bundledDir)
+                try {
+                    fresh.writeBytes(packed)
+                    if (!fresh.renameTo(cached)) throw IOException("could not stage the bundled Psiphon list")
+                } finally {
+                    fresh.delete()
+                }
+                Log.i("PsiphonServerList", "Verified and staged the bundled Psiphon server list")
+            }
+        } catch (e: IOException) {
+            onProblem(e)
+        }
+        return entriesFile(bundledDir, workDir, onProblem = onProblem)
+    }
+
+    @Synchronized
     fun entriesFile(assetDir: File, workDir: File, signingKey: String = SIGNING_KEY, onProblem: (IOException) -> Unit = {}): File? {
         val source = File(assetDir, PSIPHON_SERVERS_DAT)
         if (!source.isFile) return null
         val entries = File(workDir, ENTRIES_FILE)
         val mark = File(workDir, SOURCE_MARK)
-        val stamp = "${source.length()}:${source.lastModified()}"
-        if (entries.isFile && mark.isFile && runCatching { mark.readText() }.getOrNull() == stamp) return entries
         return try {
-            val text = unpack(source.readBytes(), signingKey)
+            if (!workDir.isDirectory && !workDir.mkdirs()) throw IOException("could not create the Psiphon work directory")
+            val packed = source.inputStream().use { readBounded(it, MAX_COMPRESSED) }
+            // A length/mtime pair can collide across an app update or replacement.
+            val stamp = Base64.getEncoder().encodeToString(
+                MessageDigest.getInstance("SHA-256").digest(packed + signingKey.toByteArray(Charsets.US_ASCII))
+            )
+            if (entries.isFile && mark.isFile && mark.readText() == stamp) return entries
+            val text = unpack(packed, signingKey)
             val fresh = File(workDir, "$ENTRIES_FILE.${System.nanoTime()}.new")
             fresh.writeText(text)
-            if (!fresh.renameTo(entries)) {
-                entries.delete()
+            try {
                 if (!fresh.renameTo(entries)) throw IOException("could not put ${entries.name} in place")
+            } finally {
+                fresh.delete()
             }
             mark.writeText(stamp)
             entries
@@ -82,17 +149,17 @@ object PsiphonServerList {
         } catch (_: Exception) {
             null
         }
-        return region?.trim()?.uppercase(Locale.ROOT)?.takeIf { it.length == 2 && it.all(Char::isLetter) }
+        return region?.trim()?.uppercase(Locale.ROOT)?.takeIf { it in isoCountries }
     }
 
     fun regionsOf(line: String): List<String>? = leavesFrom.find(line)?.groupValues?.get(1)?.split(' ')
 
     fun remember(regions: Collection<String>) {
-        AetherSettingsStorage.putPsiphonRegions(regions.toSortedSet().joinToString(","))
+        AetherSettingsStorage.putPsiphonRegions(regions.filter { it in isoCountries }.toSortedSet().joinToString(","))
     }
 
     fun remembered(): Set<String> =
-        AetherSettingsStorage.getPsiphonRegions().split(',').filterTo(sortedSetOf()) { it.length == 2 }
+        AetherSettingsStorage.getPsiphonRegions().split(',').filterTo(sortedSetOf()) { it in isoCountries }
 
     fun forgetRemembered() {
         AetherSettingsStorage.putPsiphonRegions("")
@@ -101,7 +168,7 @@ object PsiphonServerList {
     @Throws(IOException::class)
     internal fun unpack(packed: ByteArray, signingKey: String): String {
         val text = try {
-            InflaterInputStream(ByteArrayInputStream(packed)).use { it.readBytes() }.toString(Charsets.UTF_8)
+            InflaterInputStream(ByteArrayInputStream(packed)).use { readBounded(it, MAX_UNCOMPRESSED) }.toString(Charsets.UTF_8)
         } catch (e: IOException) {
             throw IOException("the list is not compressed the way Psiphon writes it", e)
         }

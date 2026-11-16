@@ -842,7 +842,12 @@ object AetherCoreManager {
             }
         }
         if (usesPsiphon(arguments)) {
-            psiphonStateDir(context, isSession).mkdirs()
+            val directory = psiphonStateDir(context, isSession)
+            val helper = psiphonFile(context)
+            if (!directory.isDirectory && !directory.mkdirs()) {
+                Log.e(TAG, "Could not create Psiphon data directory")
+            }
+            Log.i(TAG, "Psiphon helper: present=${helper.isFile}, executable=${helper.canExecute()}, ABI=${android.os.Build.SUPPORTED_ABIS.joinToString()}")
         }
     }
 
@@ -856,9 +861,10 @@ object AetherCoreManager {
         val wg = File(keysDir, AetherIdentityManager.WIREGUARD_FILE)
         val masque = File(keysDir, AetherIdentityManager.MASQUE_FILE)
         val workDir = AetherIdentityManager.workDir(context)
-        val serverEntries = if (usesPsiphon(arguments)) {
-            PsiphonServerList.entriesFile(context.filesDir, workDir) { e ->
-                Log.w(TAG, "Bundled Psiphon server list could not be unpacked", e)
+        val wantsShippedList = arguments.windowed(2).any { it[0] == PSIPHON_SERVER_ENTRIES && it[1] == SHIPPED_LIST }
+        val serverEntries = if (usesPsiphon(arguments) && wantsShippedList) {
+            PsiphonServerList.entriesFile(context, workDir) { e ->
+                Log.w(TAG, "Psiphon bootstrap list unavailable; discovery must use the remote list or cached servers", e)
             }
         } else {
             null
@@ -927,9 +933,6 @@ object AetherCoreManager {
                 }
                 if (psiphonBinary != null && "--psiphon-bin" !in withoutInlineBridges) {
                     addAll(listOf("--psiphon-bin", psiphonBinary.absolutePath))
-                }
-                if (psiphonServerEntries != null && PSIPHON_SERVER_ENTRIES !in withoutInlineBridges) {
-                    addAll(listOf(PSIPHON_SERVER_ENTRIES, psiphonServerEntries.absolutePath))
                 }
             }
         }

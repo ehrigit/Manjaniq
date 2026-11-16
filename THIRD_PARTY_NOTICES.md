@@ -37,7 +37,15 @@ build scripts (`third_party/Aether/pt-build.sh`, `third_party/Aether/psiphon-bui
 | Component | Source | License | Notes |
 |---|---|---|---|
 | lyrebird | `gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/lyrebird` (pinned `fc105a03c0e0`) | BSD-3-Clause (Tor Project) | obfs4 / snowflake / webtunnel pluggable transports; Tor only, started only when a bridge names one |
-| psiphon-tunnel-core | `github.com/CluvexStudio/psiphon-tunnel-core` branch `shirokhorshid` (pinned `83aa73b9…`), derived from `Psiphon-Labs/psiphon-tunnel-core` | **GPL-3.0** (upstream Psiphon) | ConsoleClient binary; started only for `--psiphon*` modes |
+| psiphon-tunnel-core | `github.com/CluvexStudio/psiphon-tunnel-core` branch `shirokhorshid` (pinned `83aa73b9b982e7421e00117f5b0c5aceb5dda452`), derived from `Psiphon-Labs/psiphon-tunnel-core` | **GPL-3.0** (upstream Psiphon; full text in `third_party/psiphon-tunnel-core-LICENSE.txt`) | ConsoleClient binary; started only for `--psiphon*` modes |
+
+For the Psiphon helper, `scripts/ci/build_helpers.sh` also asks the pinned
+upstream build script to preserve its original license and the linked Go
+modules' notices under `assets/psiphon-licenses/<go-arch>/` in the APK. The
+signed server-list asset is fetched from the issuer and verified using the key
+already carried by Aether; it is not copied from PattNG. PattNG's GPL-3.0
+sources were consulted for comparison, not copied into this change. See
+`PSIPHON_COMPARISON.md` for the reference and component-by-component analysis.
 
 Both are built `GOOS=linux CGO_ENABLED=0` exactly as upstream's own android
 release job does, and packaged as `lib<name>.so` entries so Android 10+ extracts

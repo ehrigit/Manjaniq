@@ -59,6 +59,12 @@ jobs:
           python3 -m pip install --quiet Pillow
           python3 scripts/check_assets.py
 
+      - name: Prepare signed Psiphon bootstrap list
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/ci -p 'test_psiphon*.py' -v
+          python3 scripts/ci/fetch_psiphon_servers.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -160,6 +166,21 @@ jobs:
           # Pin the upstream fix (main@8cffdef) instead of tracking crates.io.
           cargo install cargo-ndk --git https://github.com/bbqsrc/cargo-ndk --rev 8cffdefbc9fc29b15ef50390b73258032b26734b --locked
           cargo-ndk --version || cargo ndk --version
+
+      - name: Test Aether Psiphon configuration and lifecycle
+        run: |
+          set -euo pipefail
+          export LIBCLANG_PATH=/usr/lib/llvm-18/lib
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/psiphon-rust-tests"
+          if ! cargo test --manifest-path third_party/Aether/aether/Cargo.toml --locked --lib psiphon::tests -- --test-threads=1 2>&1 | tee /tmp/psiphon-rust-tests.log; then
+            tail -n 60 /tmp/psiphon-rust-tests.log | sed 's/%/%25/g; s/\r/%0D/g' | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
+          for test in selected_region_reaches_the_actual_client_config_and_any_is_empty client_notices_report_fixed_categories_without_sensitive_details_or_false_termination only_tunnel_count_events_change_connection_status; do
+            grep -q "test psiphon::tests::$test ... ok" /tmp/psiphon-rust-tests.log \
+              || { echo "::error::required Psiphon Rust test did not run: $test"; exit 1; }
+          done
+          rm -rf "$CARGO_TARGET_DIR"
 
       - name: Build Native Libraries (arm64-v8a + x86_64) - RSTA (Go)
         run: |
@@ -398,6 +419,33 @@ jobs:
           echo "Unit test results:"
           find app/build/test-results -name 'TEST-*.xml' -print -exec grep -o '<testsuite[^>]*>' {} \;
 
+      - name: Require Psiphon unit coverage
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          path = 'app/build/test-results/testDebugUnitTest/TEST-com.manjaniq.PsiphonIntegrationTest.xml'
+          required = {
+              'signedEntriesAreVerifiedAndSupplyOnlyRealIsoCountries',
+              'builtApkListIsSignedAndProvidesChoicesBeforeAnyConnection',
+              'selectionPersistsAndPropagatesForEveryDiscoveredRegionAndAny',
+              'legacyProfilesAndLearnedRegionsRemainCompatible',
+              'regionCodesStayAsciiAcrossLocalesAndAllPsiphonPlacements',
+              'labelsFollowTheSelectedEnglishOrPersianLocale',
+              'runtimeUsesTheHelperAndOnlyAddsTheRequestedBootstrapList',
+              'recoverableClientNoticesAreNotCarrierTermination',
+          }
+          try:
+              cases = {case.get('name'): case for case in ET.parse(path).getroot().iter('testcase')}
+          except (OSError, ET.ParseError) as error:
+              sys.exit(f'::error::Psiphon unit results unavailable: {error}')
+          for name in sorted(required):
+              case = cases.get(name)
+              if case is None or any(case.find(tag) is not None for tag in ('failure', 'error', 'skipped')):
+                  sys.exit(f'::error::required Psiphon unit test did not pass: {name}')
+          print(f'All {len(required)} required Psiphon unit tests passed.')
+          PY
+
       - name: Upload Aether Rust build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -500,14 +548,18 @@ jobs:
             grep -q "^lib/$ABI/libc++_shared.so$" "$ENTRIES" \
               || { echo "::error::APK missing lib/$ABI/libc++_shared.so required by libaether.so (dlopen failed: library \"libc++_shared.so\" not found)"; exit 1; }
             echo "APK contains lib/$ABI/libc++_shared.so - libc++ fix verified"
-            # Aether's helper process (Psiphon) must be in lib/<abi>/: the only
-            # path Android 10+ allows an app to exec. Warned about rather than
-            # failed on - an upstream outage must not turn the pipeline red.
-            if grep -q "^lib/$ABI/libpsiphon_tunnel_core.so$" "$ENTRIES"; then
-              echo "helper packaged: lib/$ABI/libpsiphon_tunnel_core.so"
-            else
-              echo "::warning title=Helper not packaged::lib/$ABI/libpsiphon_tunnel_core.so missing; Aether reports the Psiphon helper as unavailable"
-            fi
+            # A Psiphon build must contain both the executable and the verified
+            # bootstrap list; an APK without either cannot fulfill this feature.
+            grep -q "^lib/$ABI/libpsiphon_tunnel_core.so$" "$ENTRIES" \
+              || { echo "::error::APK missing the Psiphon helper for $ABI"; exit 1; }
+            grep -q '^assets/psiphon_servers.dat$' "$ENTRIES" \
+              || { echo "::error::APK missing the verified Psiphon server list"; exit 1; }
+            case "$ABI" in arm64-v8a) GOARCH=arm64 ;; x86_64) GOARCH=amd64 ;; esac
+            for notice in psiphon-tunnel-core-LICENSE.txt psiphon-tunnel-core-THIRD-PARTY-NOTICES.txt; do
+              grep -q "^assets/psiphon-licenses/$GOARCH/$notice$" "$ENTRIES" \
+                || { echo "::error::APK missing Psiphon notice $notice for $ABI"; exit 1; }
+            done
+            echo "Psiphon helper, license notices, and signed bootstrap list packaged for $ABI"
             # Launcher + brand resources must be packaged (regression for missing icon / stale logo)
             for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
               grep -q "mipmap-${d}.*ic_launcher" "$ENTRIES" \
@@ -589,6 +641,13 @@ jobs:
         with:
           name: manjaniq-x86_64-debug-apk
           path: tested-apk
+
+      - name: Use the built APK's Psiphon bootstrap list for instrumentation
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets
+          unzip -p tested-apk/manjaniq-x86_64-debug.apk assets/psiphon_servers.dat > app/src/main/assets/psiphon_servers.dat
+          test -s app/src/main/assets/psiphon_servers.dat
 
       - name: Enable KVM (hardware acceleration)
         run: |

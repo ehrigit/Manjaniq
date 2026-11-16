@@ -593,9 +593,11 @@ fn build_config(
         "EmitDiagnosticNotices".into(),
         serde_json::Value::from(true),
     );
+    // Diagnostic notices are needed for coarse failure categories and counts,
+    // but individual network parameters are sensitive circumvention data.
     map.insert(
         "EmitDiagnosticNetworkParameters".into(),
-        serde_json::Value::from(true),
+        serde_json::Value::from(false),
     );
     map.insert("EmitServerAlerts".into(), serde_json::Value::from(true));
     map.insert(
@@ -650,6 +652,8 @@ fn build_config(
     if let Some(code) = region() {
         log::info!("[*] psiphon is asked to leave from {code}");
         map.insert("EgressRegion".into(), serde_json::Value::from(code));
+    } else if !map.keys().any(|key| key.eq_ignore_ascii_case("EgressRegion")) {
+        log::info!("[*] psiphon exit country: any");
     }
 
     let through_proxy = upstream.is_some();
@@ -709,32 +713,53 @@ fn note(kind: &str, data: &serde_json::Value) {
 
     match kind {
         "ConnectedServer" => {
-            if let Some(address) = data.get("ipAddress").and_then(|v| v.as_str()) {
-                log::info!("[+] psiphon reached a server at {address}");
+            log::info!("[*] psiphon authenticated a server connection");
+        }
+        "ConnectedServerRegion" => {
+            if let Some(code) = data.get("serverRegion").and_then(|v| v.as_str()) {
+                if code.len() == 2 && code.bytes().all(|c| c.is_ascii_uppercase()) {
+                    log::info!("[+] psiphon connected server region: {code}");
+                }
             }
+        }
+        "CandidateServers" => {
+            if let Some(count) = data.get("count").and_then(|v| v.as_u64()) {
+                log::info!("[*] psiphon server discovery: {count} candidates");
+            }
+        }
+        "RemoteServerListResourceDownloaded" => {
+            log::info!("[*] psiphon downloaded a server list");
         }
         "AvailableEgressRegions" => {
             if let Some(regions) = data.get("regions").and_then(|v| v.as_array()) {
-                let named: Vec<&str> = regions.iter().filter_map(|r| r.as_str()).collect();
+                let named: Vec<&str> = regions.iter().filter_map(|r| r.as_str())
+                    .filter(|code| code.len() == 2 && code.bytes().all(|c| c.is_ascii_uppercase()))
+                    .collect();
                 if !named.is_empty() {
                     log::info!("[*] psiphon can leave from: {}", named.join(" "));
                 }
             }
         }
-        "ConnectingServer" | "ActiveTunnel" | "Homepage" => {
-            log::debug!("[psiphon] {kind} {data}");
+        "SocksProxyPortInUse" | "HttpProxyPortInUse" => {
+            log::error!("[-] psiphon notice: local proxy port is in use");
         }
         "Warning" | "Alert" | "Error" | "InternalError" => {
-            let text = pick(message, data);
-            if expected_without_inproxy(&text) {
-                log::debug!("[psiphon] {text}");
-            } else if kind == "Error" || kind == "InternalError" {
-                log::error!("[-] psiphon: {text}");
+            if expected_without_inproxy(message) {
+                log::debug!("[psiphon] routine platform or in-proxy notice");
             } else {
-                log::warn!("[-] psiphon: {text}");
+                // The app sees the JNI log message without its Rust log target.
+                // Reserve "[-] psiphon: " for actual carrier termination. Never
+                // forward free-form client text: it can contain IPs, URLs,
+                // credentials, server entries, or browsing destinations.
+                let line = client_notice_line(message);
+                if kind == "Error" || kind == "InternalError" {
+                    log::error!("{line}");
+                } else {
+                    log::warn!("{line}");
+                }
             }
         }
-        _ => log::debug!("[psiphon] {kind} {data}"),
+        _ => {} // In particular, never forward arbitrary notice data.
     }
 }
 
@@ -748,23 +773,45 @@ fn expected_without_inproxy(text: &str) -> bool {
         || text.contains("route ip+net")
         || text.contains("DoFileMigration")
         || text.contains("old path does not exist")
-        // S3 server-list fetch timeouts and transient network errors behind
-        // restricted networks: Psiphon should fall back to local/cached state
-        // without aborting the carrier.
-        || text.contains("context deadline exceeded")
-        || text.contains("i/o timeout")
-        || text.contains("connection refused")
-        || text.contains("no such host")
-        || text.contains("unexpected EOF")
-        || text.contains("server list fetch failed")
-        || text.contains("server_list_compressed")
 }
 
-fn pick<'a>(message: &'a str, data: &'a serde_json::Value) -> String {
-    if message.is_empty() {
-        data.to_string()
+/// Derive a useful, fixed diagnostic without logging any free-form input.
+fn client_notice_line(text: &str) -> String {
+    let text = text.to_ascii_lowercase();
+    let category = if text.contains("importing embedded server") || text.contains("embedded server entry") {
+        "bootstrap list import"
+    } else if text.contains("server list") || text.contains("server_list") {
+        "server-list discovery"
+    } else if text.contains("certificate") || text.contains("x509") {
+        "TLS certificate"
+    } else if text.contains("no such host") || text.contains("dns") || text.contains("resolver") {
+        "DNS resolution"
+    } else if text.contains("permission denied") || text.contains("operation not permitted") {
+        "permission"
+    } else if text.contains("proxy") {
+        "proxy connection"
+    } else if text.contains("config") {
+        "configuration"
+    } else if text.contains("timeout") || text.contains("deadline exceeded") {
+        "network timeout"
+    } else if text.contains("connection refused") {
+        "network connection"
     } else {
-        message.to_string()
+        "client"
+    };
+    format!("[-] psiphon notice: {category} issue")
+}
+
+/// Only Psiphon's Tunnels notice establishes or loses a tunnel; a listening
+/// socket or a live process alone is not a successful connection.
+fn observe_tunnels(connected: &mut bool, data: &serde_json::Value) {
+    let Some(count) = data.get("count").and_then(|v| v.as_u64()) else { return };
+    if count > 0 && !*connected {
+        log::info!("[+] psiphon tunnel established");
+        *connected = true;
+    } else if count == 0 && *connected {
+        log::warn!("[-] psiphon lost its tunnel; it is reconnecting");
+        *connected = false;
     }
 }
 
@@ -795,6 +842,8 @@ pub async fn start(
     let entries = server_entries();
     if let Some(path) = &entries {
         log::info!("[*] psiphon starts with the server entries in {}", path.display());
+    } else {
+        log::warn!("[-] psiphon has no bundled server entries; it needs cached servers or a remote list");
     }
 
     let mut command = Command::new(&exe);
@@ -820,9 +869,8 @@ pub async fn start(
     if let Some(out) = child.stdout.take() {
         tokio::spawn(async move {
             let mut lines = BufReader::new(out).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                log::debug!("[psiphon] {line}");
-            }
+            // The helper's arbitrary stdout is not a safe diagnostic channel.
+            while let Ok(Some(_)) = lines.next_line().await {}
         });
     }
 
@@ -842,9 +890,12 @@ pub async fn start(
             }
             Ok(Err(e)) => return Err(AetherError::Other(format!("psiphon: {e}"))),
             Ok(Ok(None)) => {
-                return Err(AetherError::Other(
-                    "psiphon stopped before it was ready".into(),
-                ))
+                let detail = match tokio::time::timeout(Duration::from_secs(1), child.wait()).await {
+                    Ok(Ok(status)) => format!("psiphon exited before it was ready: {status}"),
+                    Ok(Err(error)) => format!("psiphon notice stream closed; wait failed: {error}"),
+                    Err(_) => "psiphon notice stream closed before it was ready".to_string(),
+                };
+                return Err(AetherError::Other(detail));
             }
             Ok(Ok(Some(line))) => line,
         };
@@ -852,7 +903,7 @@ pub async fn start(
         let notice: Notice = match serde_json::from_str(&line) {
             Ok(notice) => notice,
             Err(_) => {
-                log::debug!("[psiphon] {line}");
+                log::debug!("[psiphon] ignored an unstructured client notice");
                 continue;
             }
         };
@@ -872,19 +923,7 @@ pub async fn start(
                     .and_then(|p| p.as_u64())
                     .map(|p| p as u16);
             }
-            "Tunnels" => {
-                let count = notice
-                    .data
-                    .get("count")
-                    .and_then(|c| c.as_u64())
-                    .unwrap_or(0);
-                if count > 0 {
-                    tunnelled = true;
-                } else if tunnelled {
-                    log::warn!("[-] psiphon lost its tunnel; it is reconnecting");
-                    tunnelled = false;
-                }
-            }
+            "Tunnels" => observe_tunnels(&mut tunnelled, &notice.data),
             other => note(other, &notice.data),
         }
 
@@ -898,10 +937,12 @@ pub async fn start(
     let http = http.map(|address| SocketAddr::new(bound, http_port.unwrap_or(address.port())));
 
     tokio::spawn(async move {
+        let mut connected = tunnelled;
         while let Ok(Some(line)) = lines.next_line().await {
             match serde_json::from_str::<Notice>(&line) {
+                Ok(notice) if notice.kind == "Tunnels" => observe_tunnels(&mut connected, &notice.data),
                 Ok(notice) => note(&notice.kind, &notice.data),
-                Err(_) => log::debug!("[psiphon] {line}"),
+                Err(_) => log::debug!("[psiphon] ignored an unstructured client notice"),
             }
         }
     });
@@ -912,7 +953,22 @@ pub async fn start(
 fn announce(proxy: SocketAddr, what: &'static str) {
     let proxy = crate::socks::dialable(proxy);
     tokio::spawn(async move {
-        crate::exitloc::report_through_socks(proxy, what).await;
+        // Unlike the generic exit report, do not log a public IP address for
+        // a Psiphon session. Only the country from an HTTPS trace is exposed.
+        let country = async {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .proxy(reqwest::Proxy::all(format!("socks5h://{proxy}")).ok()?)
+                .build().ok()?;
+            let body = client.get("https://www.cloudflare.com/cdn-cgi/trace")
+                .send().await.ok()?.error_for_status().ok()?.text().await.ok()?;
+            let country = crate::exitloc::parse_trace(&body)?;
+            country.bytes().all(|byte| byte.is_ascii_uppercase()).then_some(country)
+        }.await;
+        match country {
+            Some(code) => log::info!("[+] {what} exit country: {code}"),
+            None => log::debug!("[psiphon] exit-country lookup did not complete"),
+        }
     });
 }
 
@@ -920,10 +976,7 @@ fn announce(proxy: SocketAddr, what: &'static str) {
 /// so that what psiphon sends leaves where the rest of aether's traffic leaves.
 fn upstream_url() -> Option<String> {
     let proxy = crate::upstream::configured()?;
-    log::info!(
-        "[*] psiphon dials out through the upstream proxy at {}",
-        proxy.endpoint()
-    );
+    log::info!("[*] psiphon dials out through the configured upstream proxy");
     Some(proxy.psiphon_url())
 }
 
@@ -1185,6 +1238,60 @@ mod tests {
         assert!(region().is_none());
 
         clear();
+    }
+
+    #[test]
+    fn selected_region_reaches_the_actual_client_config_and_any_is_empty() {
+        let _held = hold();
+        clear();
+        let config = || {
+            let text = build_config(
+                &std::env::temp_dir(),
+                "127.0.0.1:0".parse().unwrap(),
+                None,
+                None,
+                Placement::BehindHeld,
+            ).unwrap();
+            serde_json::from_str::<serde_json::Value>(&text).unwrap()
+        };
+        assert!(config().get("EgressRegion").is_none()); // Go's absent string defaults to "".
+        assert_eq!(config()["EmitDiagnosticNetworkParameters"], false);
+        std::env::set_var("AETHER_PSIPHON_REGION", " ca ");
+        assert_eq!(config()["EgressRegion"], "CA");
+        std::env::remove_var("AETHER_PSIPHON_REGION");
+        assert!(config().get("EgressRegion").is_none());
+        clear();
+    }
+
+    #[test]
+    fn client_notices_report_fixed_categories_without_sensitive_details_or_false_termination() {
+        let inputs = [
+            ("server list fetch failed https://alice:secret@example.test/private?token=abc", "server-list discovery"),
+            ("dns: lookup private.example at 192.0.2.1", "DNS resolution"),
+            ("x509: certificate rejected for private.example", "TLS certificate"),
+            ("proxy socks5://bob:password@198.51.100.1:1080", "proxy connection"),
+            ("unrecognized payload user=alice password=secret", "client"),
+        ];
+        for (input, category) in inputs {
+            let line = client_notice_line(input);
+            assert_eq!(line, format!("[-] psiphon notice: {category} issue"));
+            assert!(!line.starts_with("[-] psiphon: "));
+            assert!(!line.contains("alice") && !line.contains("secret") && !line.contains("example"));
+            assert!(!line.contains("198.51.100.1") && !line.contains("password"));
+        }
+    }
+
+    #[test]
+    fn only_tunnel_count_events_change_connection_status() {
+        let mut connected = false;
+        observe_tunnels(&mut connected, &serde_json::json!({"port": 1080}));
+        assert!(!connected);
+        observe_tunnels(&mut connected, &serde_json::json!({"count": 1}));
+        assert!(connected);
+        observe_tunnels(&mut connected, &serde_json::json!({"count": 0}));
+        assert!(!connected);
+        observe_tunnels(&mut connected, &serde_json::json!({"count": 1}));
+        assert!(connected);
     }
 
     #[test]
