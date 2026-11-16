@@ -73,6 +73,8 @@ data class AetherLogEntry(
     val id: Long,
     val priority: Int,
     val text: AetherLogText,
+    /** Wall-clock capture time; the drawer Logs screen merges these with the RSTA ring. */
+    val timeMs: Long = System.currentTimeMillis(),
 )
 
 class ServerAetherViewModel @JvmOverloads constructor(
